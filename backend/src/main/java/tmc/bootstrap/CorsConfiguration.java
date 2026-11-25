@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import tmc.shared.web.CorrelationIdFilter;
 
 @Configuration
 public class CorsConfiguration implements WebMvcConfigurer {
@@ -18,6 +19,7 @@ public class CorsConfiguration implements WebMvcConfigurer {
     registry.addMapping("/**")
         .allowedOrigins(origins)
         .allowedMethods("GET", "POST", "PUT", "PATCH", "OPTIONS")
-        .allowedHeaders("Authorization", "Content-Type", "X-Station-Id", "X-Correlation-Id", "Idempotency-Key");
+        .allowedHeaders("Authorization", "Content-Type", "X-Station-Id", CorrelationIdFilter.HEADER, "Idempotency-Key")
+        .exposedHeaders(CorrelationIdFilter.HEADER);
   }
 }

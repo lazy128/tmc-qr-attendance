@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.LinkedHashMap;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -217,7 +218,7 @@ public final class JdbcAttemptStore
           UPDATE employee_presence SET direction='EXIT', evidence_quality='MANUAL_CORRECTION',
             event_id=?, updated_at=CURRENT_TIMESTAMP
           WHERE site_id=? AND employee_id=? AND event_id=? AND direction='ENTRY'
-          """, correlation, site, current.employeeId(), expectedEventId);
+          """, UUID.randomUUID().toString(), site, current.employeeId(), expectedEventId);
       if (changed == 0) return false;
       appendAuditRow(actor, "PRESENCE_CORRECTION", expectedEventId, "MISSED_EXIT", correlation, now);
       return true;
@@ -235,6 +236,14 @@ public final class JdbcAttemptStore
         .map(id -> findAttempt(id).orElse(null))
         .filter(Objects::nonNull)
         .toList();
+  }
+
+  public long pendingOutboxDepth(boolean centralEnabled) {
+    return jdbc.queryForObject("""
+        SELECT COUNT(*) FROM edge_outbox o JOIN access_attempt a ON a.event_id=o.event_id
+        WHERE (o.attendance_status='PENDING' AND a.command_state IN ('SENT','UNKNOWN','ACKED'))
+           OR (? AND o.central_status='PENDING')
+        """, Long.class, centralEnabled);
   }
 
   public List<AccessAttempt> unknownCommands(int limit) {

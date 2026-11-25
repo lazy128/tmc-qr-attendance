@@ -1,6 +1,7 @@
 package tmc.bootstrap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,6 +35,7 @@ import tmc.access.infrastructure.FileSnapshotProvider;
 import tmc.access.infrastructure.JdbcCredentialStore;
 import tmc.access.infrastructure.JdbcPresenceTracker;
 import tmc.access.infrastructure.JdbcAttemptStore;
+import tmc.access.infrastructure.MeteredGateCommandSender;
 import tmc.access.infrastructure.MutableSnapshot;
 import tmc.access.infrastructure.TimeoutGateCommandSender;
 import tmc.shared.clock.ClockProvider;
@@ -140,6 +142,7 @@ public class AccessConfiguration {
       TimeoutGateCommandSender gate,
       JdbcPresenceTracker presence,
       ClockProvider clock,
+      MeterRegistry metrics,
       @Value("${tmc.edge.station:GATE-1}") String station,
       @Value("${tmc.edge.site:SITE-1}") String site,
       @Value("${tmc.edge.passage-sensor:false}") boolean sensorConfigured,
@@ -157,7 +160,7 @@ public class AccessConfiguration {
         presence,
         jdbc,
         jdbc,
-        gate,
+        new MeteredGateCommandSender(gate, metrics),
         clock,
         sensorConfigured,
         Duration.ofSeconds(skew),

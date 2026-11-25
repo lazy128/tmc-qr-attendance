@@ -3,7 +3,9 @@ package tmc.access.api;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.UUID;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,18 +20,21 @@ import tmc.access.domain.Direction;
 import tmc.access.domain.EventId;
 import tmc.access.domain.SiteId;
 import tmc.access.domain.StationId;
+import tmc.shared.web.CorrelationIdFilter;
 
 @RestController
 public class AccessController {
+  private static final Logger log = LoggerFactory.getLogger(AccessController.class);
   private final VerifyAccessUseCase usecase;
+  private final MeterRegistry metrics;
 
-  public AccessController(VerifyAccessUseCase usecase) {
+  public AccessController(VerifyAccessUseCase usecase, MeterRegistry metrics) {
     this.usecase = usecase;
+    this.metrics = metrics;
   }
 
   @PostMapping("/access/v1/verify")
   public ResponseEntity<?> verify(
-      @RequestHeader(value = "X-Correlation-Id", required = false) String correlation,
       @RequestHeader(value = "X-Station-Id") String station,
       @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
       @RequestBody VerifyBody body
@@ -41,16 +46,15 @@ public class AccessController {
     require(body.scannedAt(), 40, "scannedAt");
     require(body.token(), 4096, "token");
     require(body.deviceId(), 256, "deviceId");
-    if (correlation != null) require(correlation, 100, "X-Correlation-Id");
+    String correlationId = CorrelationIdFilter.currentId();
     if (idempotencyKey != null && !idempotencyKey.equals(body.eventId())) {
       return ResponseEntity.badRequest().body(new ApiError(
           "IDEMPOTENCY_KEY_MISMATCH",
           "Idempotency-Key must equal eventId",
-          correlation,
+          correlationId,
           false
       ));
     }
-    String correlationId = correlation == null ? UUID.randomUUID().toString() : correlation;
     var request = new AccessRequest(
         new EventId(body.eventId()),
         correlationId,
@@ -71,6 +75,10 @@ public class AccessController {
       ));
     }
     var attempt = result.attempt();
+    String decision = attempt.decision().name();
+    String reason = attempt.reasonCode() == null ? decision : attempt.reasonCode().name();
+    metrics.counter("tmc.edge.verify.decisions", "decision", decision, "reasonCode", reason).increment();
+    log.info("verify completed decision={} reasonCode={} command={}", decision, reason, attempt.command());
     String kiosk = attempt.command() == Command.UNKNOWN
         ? "đang xác minh trạng thái cổng, chờ bảo vệ"
         : attempt.decision() == Decision.DENY
@@ -82,7 +90,7 @@ public class AccessController {
                 : "Đã ghi nhận yêu cầu";
     return ResponseEntity.ok(new VerifyResponse(
         attempt.eventId().value(),
-        attempt.decision().name(),
+        decision,
         attempt.reasonCode() == null ? null : attempt.reasonCode().name(),
         attempt.command().name(),
         attempt.passage().name(),

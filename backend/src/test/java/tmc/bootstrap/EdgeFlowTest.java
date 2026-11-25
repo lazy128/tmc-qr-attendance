@@ -2,6 +2,10 @@ package tmc.bootstrap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.PatternLayout;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -16,10 +20,12 @@ import java.time.ZoneId;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +37,7 @@ import tmc.access.domain.port.Credential;
 import tmc.attendance.application.AttendanceRecordStore;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.audit.AuditHash;
+import tmc.shared.web.CorrelationIdFilter;
 
 class EdgeFlowTest {
   private static final ZoneId HR_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
@@ -174,6 +181,109 @@ class EdgeFlowTest {
     assertThat(hashes.get(0)).isEqualTo(hashes.get(1)).isNotEqualTo(hashes.get(2));
   }
 
+  @Test
+  void verifyExposesMetricsAndCorrelatesLogsWithoutRequestData() throws Exception {
+    String employee = "employee-private-observability";
+    String device = "device-private-observability";
+    String secret = "secret-private-observability";
+    String correlation = "trace-observability-1";
+    app.getBean(JdbcCredentialStore.class).save(new Credential(
+        "observability-credential", employee, 1, true, device
+    ));
+
+    var root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var lines = new ConcurrentLinkedQueue<String>();
+    var layout = new PatternLayout();
+    layout.setContext(root.getLoggerContext());
+    layout.setPattern(app.getEnvironment().getRequiredProperty("logging.pattern.console"));
+    layout.start();
+    var appender = new AppenderBase<ILoggingEvent>() {
+      @Override protected void append(ILoggingEvent event) { lines.add(layout.doLayout(event)); }
+    };
+    appender.setContext(root.getLoggerContext());
+    appender.start();
+    root.addAppender(appender);
+
+    String qr;
+    try {
+      var entry = scan("observability-credential", device, "ENTRY");
+      qr = entry.get("token");
+      String ackedMetric = "/actuator/metrics/tmc.edge.gate.commands?tag=status:ACKED";
+      double previousAcked = measurement(get(ackedMetric, null), "COUNT");
+      var outcome = post("/access/v1/verify", entry, secret, correlation);
+      assertThat(outcome.statusCode()).isEqualTo(200);
+      assertThat(outcome.headers().firstValue(CorrelationIdFilter.HEADER)).contains(correlation);
+      assertThat(json.readTree(outcome.body()).path("correlationId").asText()).isEqualTo(correlation);
+      assertThat(verify(entry).path("steps").get(0).asText()).isEqualTo("IDEMPOTENT_REPLAY");
+      assertThat(measurement(get(ackedMetric, null), "COUNT")).isEqualTo(previousAcked + 1);
+
+      var reused = new java.util.HashMap<>(entry);
+      reused.put("eventId", UUID.randomUUID().toString());
+      reused.put("scannedAt", Instant.now().toString());
+      assertThat(verify(reused).path("reasonCode").asText()).isEqualTo("REPLAY");
+      assertThat(measurement(get("/actuator/metrics/tmc.edge.verify.decisions?tag=reasonCode:ALLOW", null), "COUNT"))
+          .isGreaterThanOrEqualTo(2);
+      assertThat(measurement(get("/actuator/metrics/tmc.edge.verify.decisions?tag=reasonCode:REPLAY", null), "COUNT"))
+          .isGreaterThanOrEqualTo(1);
+      assertThat(measurement(get(
+          "/actuator/metrics/http.server.requests?tag=method:POST&tag=uri:%2Faccess%2Fv1%2Fverify", null
+      ), "COUNT")).isGreaterThanOrEqualTo(3);
+
+      var error = post("/access/v1/verify", Map.of(), null, "sensitive@example.test");
+      assertThat(error.statusCode()).isEqualTo(400);
+      String generated = error.headers().firstValue(CorrelationIdFilter.HEADER).orElseThrow();
+      assertThat(UUID.fromString(generated).toString()).isEqualTo(generated);
+      assertThat(json.readTree(error.body()).path("correlationId").asText()).isEqualTo(generated);
+    } finally {
+      root.detachAppender(appender);
+      appender.stop();
+      layout.stop();
+    }
+    String logs = String.join("", lines);
+    assertThat(logs).contains("[" + correlation + "]", "decision=ALLOW reasonCode=ALLOW command=ACKED")
+        .doesNotContain(qr, secret, employee, device, "sensitive@example.test", "observability-credential");
+  }
+
+  @Test
+  void actuatorReportsStaleSnapshotAndRealOutboxDepthWithoutHealthDetails() throws Exception {
+    try (var stale = (ServletWebServerApplicationContext) new SpringApplicationBuilder(EdgeApplication.class).run(
+        "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_stale_test",
+        "--tmc.hr.schedule=-", "--tmc.edge.local-demo-authority=false"
+    )) {
+      var jdbc = stale.getBean(JdbcTemplate.class);
+      jdbc.update("INSERT INTO access_attempt(event_id, command_state) VALUES ('health-pending', 'SENT')");
+      jdbc.update("INSERT INTO edge_outbox(event_id) VALUES ('health-pending')");
+      var edge = stale.getBean(EdgeHealthIndicator.class).health();
+      assertThat(edge.getDetails()).containsEntry("snapshot", "STALE").containsEntry("outboxDepth", 1L);
+
+      var freshResponse = get("/actuator/health", null);
+      assertThat(freshResponse.statusCode()).isEqualTo(200);
+      assertThat(json.readTree(freshResponse.body())).isEqualTo(json.readTree("{\"status\":\"UP\"}"));
+      assertThat(measurement(get("/actuator/metrics/tmc.edge.snapshot.fresh", null), "VALUE")).isEqualTo(1);
+
+      String staleBase = "http://127.0.0.1:" + stale.getWebServer().getPort();
+      var response = getFrom(staleBase, "/actuator/health");
+      assertThat(response.statusCode()).isEqualTo(503);
+      assertThat(json.readTree(response.body())).isEqualTo(json.readTree("{\"status\":\"OUT_OF_SERVICE\"}"));
+      assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.snapshot.fresh"), "VALUE")).isZero();
+      assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.outbox.depth"), "VALUE")).isEqualTo(1);
+      assertThat(getFrom(staleBase, "/actuator/env").statusCode()).isEqualTo(404);
+    }
+  }
+
+  private static HttpResponse<String> getFrom(String origin, String path) throws Exception {
+    var request = HttpRequest.newBuilder(URI.create(origin + path)).timeout(Duration.ofSeconds(5)).GET().build();
+    return HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static double measurement(HttpResponse<String> response, String statistic) throws Exception {
+    assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+    for (var metric : json.readTree(response.body()).path("measurements")) {
+      if (statistic.equals(metric.path("statistic").asText())) return metric.path("value").asDouble();
+    }
+    throw new AssertionError("Missing statistic " + statistic);
+  }
+
   private static JsonNode uncheckedVerify(Map<String, String> scan) {
     try {
       return verify(scan);
@@ -203,7 +313,12 @@ class EdgeFlowTest {
   }
 
   private static HttpResponse<String> post(String path, Object body, String token) throws Exception {
+    return post(path, body, token, null);
+  }
+
+  private static HttpResponse<String> post(String path, Object body, String token, String correlation) throws Exception {
     var request = request(path, token).header("Content-Type", "application/json").header("X-Station-Id", "GATE-1");
+    if (correlation != null) request.header(CorrelationIdFilter.HEADER, correlation);
     return HTTP.send(request.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body))).build(),
         HttpResponse.BodyHandlers.ofString());
   }

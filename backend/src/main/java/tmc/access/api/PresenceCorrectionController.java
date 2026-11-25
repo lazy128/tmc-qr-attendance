@@ -1,7 +1,6 @@
 package tmc.access.api;
 
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -14,6 +13,7 @@ import tmc.access.application.PermissionPolicy;
 import tmc.access.domain.port.PresenceCorrectionStore;
 import tmc.shared.DemoIdentity;
 import tmc.shared.clock.ClockProvider;
+import tmc.shared.web.CorrelationIdFilter;
 
 @RestController
 public class PresenceCorrectionController {
@@ -50,11 +50,11 @@ public class PresenceCorrectionController {
     if (!"MISSED_EXIT".equals(request.reason()) || request.lastEntryEventId() == null) {
       throw new IllegalArgumentException("Supply lastEntryEventId and reason MISSED_EXIT");
     }
-    String correctionId = UUID.randomUUID().toString();
-    if (!corrections.correctMissedExit(request.lastEntryEventId(), site, station, actor, correctionId, clock.now())) {
+    String correlationId = CorrelationIdFilter.currentId();
+    if (!corrections.correctMissedExit(request.lastEntryEventId(), site, station, actor, correlationId, clock.now())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "That entry is no longer the current presence event");
     }
-    return Map.of("status", "CORRECTED", "correlationId", correctionId);
+    return Map.of("status", "CORRECTED", "correlationId", correlationId);
   }
 
   public record Correction(String lastEntryEventId, String reason) {}

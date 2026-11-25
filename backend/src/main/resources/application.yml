@@ -1,0 +1,12 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  pattern:
+    console: "%d{ISO8601} %-5level [%X{correlationId}] %logger{20} - %msg%n"

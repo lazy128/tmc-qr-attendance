@@ -1,5 +1,7 @@
 # TMC QR Attendance & Access Control
 
+[![Backend CI](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml)
+
 Workspace layout for the M2 project. The backend and frontend are separate projects with their own run instructions.
 
 ## Projects
@@ -38,3 +40,5 @@ Open `http://localhost:5173`. On **Access check**, issue a QR token for the defa
 | Download an HR CSV for a month | `GET /reports/v1/exports?month=YYYY-MM` |
 
 The demo uses simulated station authentication and Turnstile behavior. Do not use production employee data. Build and test status is recorded in `backend/README.md`.
+
+For the Docker demo and the Actuator endpoints, see [Running and monitoring the Edge demo](backend/README.md#edge-health-metrics-and-logs).

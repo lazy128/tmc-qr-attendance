@@ -16,6 +16,26 @@ The demo binds to loopback and stores attempts, site-scoped JTI consumption, ide
 
 The packaged backend can also run with `java -jar target/qr-attendance-edge-1.0.0.jar` after `mvn verify`. The integration tests bind to an ephemeral loopback port. Run them in an environment that allows local sockets.
 
+## Edge health, metrics and logs
+
+`GET /actuator/health` shows only the overall status. A stale snapshot makes Edge report HTTP 503 with `OUT_OF_SERVICE`. The health indicator uses the same snapshot freshness rule as the verify pipeline. If the outbox cannot be queried, health reports `DOWN`.
+
+Read the following via `GET /actuator/metrics/<name>`:
+
+| Metric | What it measures |
+|---|---|
+| `tmc.edge.snapshot.fresh` | `1` for FRESH and `0` for STALE. |
+| `tmc.edge.outbox.depth` | Distinct rows awaiting an enabled delivery or command resolution. Central backlog counts only when Central dispatch is enabled. |
+| `tmc.edge.verify.decisions` | Verify responses with a decision, including saved idempotent responses. Filter with `?tag=reasonCode:REPLAY` or `?tag=decision:DENY`. |
+| `tmc.edge.gate.commands` | Initial command outcomes by `status` (ACKED, UNKNOWN, FAILED). A saved idempotent response does not send or count a second command. |
+| `http.server.requests` | Server processing time. Filter with `?tag=method:POST&tag=uri:%2Faccess%2Fv1%2Fverify`. Actuator reports total and max time in seconds. |
+
+The decision counts and verify timer are available after the first matching request. Metric tags contain no employee, device or correlation IDs. Each HTTP response returns `X-Correlation-Id`. Send an opaque ID, or let the filter generate one. The verify log contains the correlation ID and outcome codes. The test suite scans those logs for raw QR, bearer token and employee/device data.
+
+### Docker Compose demo
+
+From `backend/`, run `docker compose up --build`. This publishes Edge on `127.0.0.1:8080`, uses the built-in fake Turnstile, and stores H2 in the `edge-data` volume. Set `TMC_HR_DEMO_TOKEN` before starting if you want to open Attendance from the frontend. This is a demo configuration. Run `docker compose down` to stop it and keep the demo database.
+
 ## Structure
 
 Layered modular monolith (`api` → `application` → `domain` ← `infrastructure`). Spring stays in `api`, `infrastructure` JDBC adapters, and `tmc.bootstrap`.
@@ -75,7 +95,7 @@ The proposed values are a 30-second token TTL, 5 seconds of clock skew, 15-minut
 
 ## Test and load report
 
-The local verification on Windows 11 used Java 21 and Node.js 24. `mvnw.cmd verify` passed 24 backend tests and packaged the JAR. Frontend passed 5 tests, TypeScript, and the client/server Vite build. A Microsoft Edge smoke test issued a QR, verified ACKED without passage confirmation, waited for the outbox, and checked that the same event appeared in both the UI and its downloaded HR CSV. The first offline Surefire run lacked plugin dependencies. The Windows sandbox blocked local sockets for the HTTP tests and required a workspace-local temp directory for Vitest. The checks completed after those environment issues were resolved.
+The local verification on Windows 11 used Java 21 and Node.js 24. `mvnw.cmd verify` passed 26 backend tests and packaged the JAR. Frontend passed 5 tests, TypeScript, and the client/server Vite build. A Microsoft Edge smoke test issued a QR, verified ACKED without passage confirmation, waited for the outbox, and checked that the same event appeared in both the UI and its downloaded HR CSV. The first offline Surefire run lacked plugin dependencies. The Windows sandbox blocked local sockets for the HTTP tests and required a workspace-local temp directory for Vitest. The checks completed after those environment issues were resolved.
 
 The Node.js load script issues one fresh QR per scan and logs each verify response, error and timeout as JSON Lines. From `backend/`, run `node scripts/access-load.mjs` against a fresh local demo database. It defaults to 800 scans over 30 minutes for one site. To run two sites concurrently, use a separate Edge/DB per site and configure `EDGE_URL`, `SITE_ID`, `STATION_ID`, and a separate `LOAD_REPORT` per process. Set `DURATION_SECONDS=30` for the compressed local run. The boundary is Node HTTP request through receipt and parsing of the Edge response. It excludes browser rendering, real LAN and physical gate response.
 

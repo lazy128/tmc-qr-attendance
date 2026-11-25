@@ -5,7 +5,6 @@ import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -24,6 +23,7 @@ import tmc.attendance.domain.AttendanceRecord;
 import tmc.shared.DemoIdentity;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
+import tmc.shared.web.CorrelationIdFilter;
 
 @RestController
 public class AttendanceController {
@@ -108,6 +108,6 @@ public class AttendanceController {
   }
 
   private void audit(String actor, String action, String target) {
-    audit.append(actor, action, target, "SUCCESS", UUID.randomUUID().toString(), clock.now());
+    audit.append(actor, action, target, "SUCCESS", CorrelationIdFilter.currentId(), clock.now());
   }
 }

@@ -40,7 +40,7 @@ public final class PolicyStep implements VerificationStep {
 
   @Override
   public StepResult execute(AccessRequest request, AccessContext context) {
-    if (Duration.between(snapshot.snapshotTime(), clock.now()).compareTo(snapshotMaxAge) > 0) {
+    if (!snapshot.isFreshAt(clock.now(), snapshotMaxAge)) {
       return StepResult.deny(Reason.SNAPSHOT_STALE);
     }
     boolean allowed = policy.allows(context.claims, request) && snapshot.policyAllows(context.claims, request);
