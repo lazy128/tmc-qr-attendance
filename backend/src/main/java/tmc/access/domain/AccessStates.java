@@ -1,0 +1,47 @@
+package tmc.access.domain;
+
+public final class AccessStates {
+  private AccessStates() {}
+
+  public enum Decision {
+    ALLOW,
+    DENY
+  }
+
+  public enum Command {
+    NOT_SENT,
+    SENT,
+    ACKED,
+    FAILED,
+    UNKNOWN
+  }
+
+  public enum Passage {
+    NOT_AVAILABLE,
+    UNCONFIRMED,
+    CONFIRMED
+  }
+
+  public enum Evidence {
+    ACK_ONLY,
+    PASSAGE_CONFIRMED
+  }
+
+  public enum Reason {
+    TOKEN_EXPIRED,
+    NOT_YET_VALID,
+    CLOCK_SKEW,
+    INVALID_TOKEN,
+    REPLAY,
+    REVOKED,
+    CVER_MISMATCH,
+    DEVICE_MISMATCH,
+    ANTI_PASSBACK,
+    STATION_SCOPE,
+    POLICY_DENIED,
+    PERSIST_FAILED,
+    STATION_AUTH_FAILED,
+    SNAPSHOT_STALE,
+    REQUEST_IN_PROGRESS
+  }
+}

@@ -1,0 +1,61 @@
+package tmc.access.api;
+
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import tmc.access.application.PermissionPolicy;
+import tmc.access.domain.port.PresenceCorrectionStore;
+import tmc.shared.DemoIdentity;
+import tmc.shared.clock.ClockProvider;
+
+@RestController
+public class PresenceCorrectionController {
+  private final PresenceCorrectionStore corrections;
+  private final DemoIdentity identity;
+  private final PermissionPolicy policy;
+  private final ClockProvider clock;
+  private final String site;
+  private final String station;
+
+  public PresenceCorrectionController(
+      PresenceCorrectionStore corrections, DemoIdentity identity, PermissionPolicy policy, ClockProvider clock,
+      @Value("${tmc.edge.site:SITE-1}") String site, @Value("${tmc.edge.station:GATE-1}") String station
+  ) {
+    this.corrections = corrections;
+    this.identity = identity;
+    this.policy = policy;
+    this.clock = clock;
+    this.site = site;
+    this.station = station;
+  }
+
+  @PostMapping("/gates/v1/presence-corrections")
+  public Map<String, String> correct(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @RequestHeader("X-Station-Id") String stationId,
+      @RequestBody Correction request
+  ) {
+    String actor = identity.authenticate(authorization)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Enter a valid demo bearer token"));
+    if (!policy.permits(actor, "presence:correct") || !station.equals(stationId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Correction requires the assigned guard");
+    }
+    if (!"MISSED_EXIT".equals(request.reason()) || request.lastEntryEventId() == null) {
+      throw new IllegalArgumentException("Supply lastEntryEventId and reason MISSED_EXIT");
+    }
+    String correctionId = UUID.randomUUID().toString();
+    if (!corrections.correctMissedExit(request.lastEntryEventId(), site, station, actor, correctionId, clock.now())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "That entry is no longer the current presence event");
+    }
+    return Map.of("status", "CORRECTED", "correlationId", correctionId);
+  }
+
+  public record Correction(String lastEntryEventId, String reason) {}
+}

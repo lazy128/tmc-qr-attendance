@@ -1,26 +1,40 @@
-# Pixel Prompted Portrait
+# TMC QR Attendance & Access Control
 
-Implement exactly the screenshot and nothing else
+Workspace layout for the M2 project. The backend and frontend are separate projects with their own run instructions.
 
-This project was built with [Lovable](https://lovable.dev).
+## Projects
 
-**Live app**: https://pixel-prompted-portrait.lovable.app
+- [`backend/`](backend/README.md): Java 21, Spring Boot, H2 Edge API and domain modules.
+- [`frontend/`](frontend/README.md): TMC operations console, split into Access, User QR, and Attendance modules.
+- [`Phase1_Architecture.md`](Phase1_Architecture.md): architecture views, ADRs, traceability, assumptions, and NFR scenarios.
 
-## Build with Lovable
+## Local API connection
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/6a4decd4-e895-4904-8cd8-4d46a2318e1d).
+In one PowerShell terminal, start the backend with Java 21 and the included Maven Wrapper:
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+```powershell
+cd backend
+$env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
+.\mvnw.cmd spring-boot:run
+```
 
-## Development
+In a second terminal, start the frontend with Node.js 24 and npm:
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+```powershell
+cd frontend
+Copy-Item .env.example .env
+npm ci
 npm run dev
 ```
+
+Open `http://localhost:5173`. On **Access check**, issue a QR token for the default demo credential, then verify before it expires. On **Attendance records**, enter the demo HR token, load records, choose the scan month, and download the CSV.
+
+| Feature | Backend route |
+|---|---|
+| Issue QR token | `POST /qr/v1/tokens` |
+| Revoke credential | `POST /qr/v1/credentials/{id}/revoke` |
+| Verify gate access | `POST /access/v1/verify` |
+| List authorized attendance records | `GET /attendance/v1/records` |
+| Download an HR CSV for a month | `GET /reports/v1/exports?month=YYYY-MM` |
+
+The demo uses simulated station authentication and Turnstile behavior. Do not use production employee data. Build and test status is recorded in `backend/README.md`.
