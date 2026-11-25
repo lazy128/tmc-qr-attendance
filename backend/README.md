@@ -84,7 +84,7 @@ Metric quyết định và timer xuất hiện sau khi có request tương ứng
 
 Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B test`. Test tích hợp mở cổng loopback tạm và dùng H2 trong bộ nhớ. Workflow CI chạy các test backend trên Ubuntu. [Bộ test backend](src/test/java/tmc/) · [Đối chiếu test theo AC](../README.md#m2-checklist)
 
-Sau lần tổ chức lại package, `mvnw.cmd verify` chạy thành công **29 test** và đóng gói JAR. Test mới kiểm tra vòng phụ thuộc, tính tương thích của payload đang lưu và việc Central nhận lại cùng payload mà không xử lý trùng.
+Ngày 25/11/2026, `mvnw.cmd clean verify` chạy trên Windows với JDK 21 và một kho dependency Maven trống. Kết quả là **79 test đạt** và JAR được đóng gói thành công. Log đầy đủ của lần chạy local nằm ở `verification-logs/maven-verify.log` từ thư mục gốc. [Test từng bước](src/test/java/tmc/access/application/step/) · [Workflow CI](../.github/workflows/ci.yml)
 
 Để đo tải fresh DB đang chạy, dùng `node scripts/access-load.mjs` từ `backend/`. Mặc định script phát 800 scan trong 30 phút cho một site, đo HTTP verify và ghi JSON Lines. Để chạy đồng thời hai site, dùng hai instance và DB riêng, đặt `EDGE_URL`, `SITE_ID`, `STATION_ID` và `LOAD_REPORT` cho từng tiến trình. Tạo đường dẫn báo cáo mới cho mỗi lần chạy. Có thể đặt `DURATION_SECONDS=30` để thử nhanh.
 

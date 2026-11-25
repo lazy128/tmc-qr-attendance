@@ -1,10 +1,10 @@
 # TMC QR Attendance & Access Control
 
-[![Backend CI](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml)
+[![CI](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lazy128/tmc-qr-attendance/actions/workflows/ci.yml)
 
 Ứng dụng mẫu cho Assignment M2. **Access** là module chính của Task 2. Demo cho phép cấp QR ngắn hạn, kiểm tra truy cập tại Edge, điều khiển cổng mô phỏng, ghi nhận công và tải CSV theo tháng.
 
-[Cách chạy](#chạy-demo) · [Ba view kiến trúc](#architecture-views) · [SOLID](#solid) · [Đối chiếu M2](#m2-checklist)
+[Cách chạy](#chạy-demo) · [Ba view kiến trúc](#architecture-views) · [SOLID](#solid) · [Reflection](#reflection) · [Đối chiếu M2](#m2-checklist)
 
 ## Chạy demo
 
@@ -36,8 +36,8 @@ Mở [console](http://localhost:5173). Ở **Access check**, giữ `SITE-1` / `G
 | Phần | Thư mục | Lệnh |
 | --- | --- | --- |
 | Backend | `backend/` | `.\mvnw.cmd test` trên Windows hoặc `./mvnw test` trên macOS/Linux. Dùng `verify` để chạy thêm bước đóng gói JAR. |
-| Frontend | `frontend/` | `npm test`, `npm run typecheck`, `npm run build`. |
-| GitHub Actions | `.github/workflows/ci.yml` | Chạy `mvn -B test` cho backend trên Ubuntu với Java 21. |
+| Frontend | `frontend/` | `npm ci`, `npm run typecheck`, `npm test`, `npm run build`. |
+| GitHub Actions | `.github/workflows/ci.yml` | Ubuntu chạy `mvn -B test` với Java 21 và chạy `npm ci`, `npm run typecheck`, `npm test` với Node.js 24 khi push hoặc mở pull request. |
 
 ## Cách tổ chức repo
 
@@ -45,7 +45,7 @@ Mở [console](http://localhost:5173). Ở **Access check**, giữ `SITE-1` / `G
 backend/                 Java, Spring Boot, H2 và test
 frontend/                React, TanStack Start và test
 Phase1_Architecture.md   Thiết kế tổng thể, ADR và truy vết Phase 0–1
-.github/workflows/        CI backend trên Java 21
+.github/workflows/        CI backend và frontend
 ```
 
 [Cấu hình, API, Docker và metrics backend](backend/README.md) · [Cấu trúc và cấu hình frontend](frontend/README.md)
@@ -296,7 +296,7 @@ flowchart LR
 
 | Nguyên lý | Áp dụng ở đâu | Bằng chứng trong code và test |
 | --- | --- | --- |
-| **S · Single Responsibility** | Access chia logic xác minh thành các bước có một lý do thay đổi. Attendance tách áp dụng policy khỏi định dạng CSV. | [Các VerificationStep](backend/src/main/java/tmc/access/application/step/), [RecordAttendance](backend/src/main/java/tmc/attendance/application/RecordAttendance.java), [AttendanceCsv](backend/src/main/java/tmc/attendance/application/AttendanceCsv.java). [VerificationPipelineTest](backend/src/test/java/tmc/access/application/VerificationPipelineTest.java) kiểm tra nhóm lỗi token và policy. |
+| **S · Single Responsibility** | Access chia logic xác minh theo từng bước. Attendance tách áp dụng policy khỏi định dạng CSV. | Có test riêng cho từng bước xác minh. [Các VerificationStep](backend/src/main/java/tmc/access/application/step/) · [Test từng bước](backend/src/test/java/tmc/access/application/step/) · [RecordAttendance](backend/src/main/java/tmc/attendance/application/RecordAttendance.java) · [AttendanceCsv](backend/src/main/java/tmc/attendance/application/AttendanceCsv.java) |
 | **O · Open/Closed** | Access nhận danh sách `VerificationStep` có thứ tự. Cổng và chính sách eligibility được thay qua interface. | [VerifyAccessUseCase](backend/src/main/java/tmc/access/application/VerifyAccessUseCase.java), [EligibilityPolicy](backend/src/main/java/tmc/attendance/domain/EligibilityPolicy.java). Test `acceptsAnExtraStepAndReturnsInProgressWhileCommandIsPending` đăng ký bước mới qua constructor. |
 | **L · Liskov Substitution** | Access dùng fake, simulator và HTTP skeleton qua cùng `GateCommandSender`. Outcome được biểu diễn bằng `GateResult` cho mọi adapter. | [GateCommandSenderContractTest](backend/src/test/java/tmc/access/infrastructure/turnstile/GateCommandSenderContractTest.java) chạy với ba adapter. Test áp dụng outcome lên `AccessAttempt.withCommand` và xác nhận ACK chỉ tạo `ACK_ONLY`. HTTP skeleton trả FAILED cho đến khi có vendor contract. |
 | **I · Interface Segregation** | Access tách gửi lệnh, đọc trạng thái và nhận chứng cứ. UserQr dùng reader, writer, signer theo tác vụ. Worker sync chỉ cần lấy và đánh dấu payload. | [Access ports](backend/src/main/java/tmc/access/domain/port/), [CentralOutbox](backend/src/main/java/tmc/shared/outbox/CentralOutbox.java), [CentralOutboxWorker](backend/src/main/java/tmc/bootstrap/worker/CentralOutboxWorker.java). Contract test gửi lệnh chỉ cần `GateCommandSender`. |
@@ -316,6 +316,16 @@ Các ví dụ dưới đây dựa trên source đã lưu trong Git. Chúng có t
 
 Những ranh giới này cho phép test Access với fake Turnstile và thay rule eligibility mà không cần thay API. Một trade-off là store JDBC vẫn giữ nhiều thao tác cùng nhau để bảo đảm transaction nguyên tử. Việc tách phần codec và port đọc outbox giảm trách nhiệm của store mà vẫn giữ ranh giới commit rõ ràng.
 
+## Reflection
+
+1. **OCP và thứ tự xác minh.** Có thể đăng ký thêm `VerificationStep` qua constructor, nhưng mốc `step.order() >= 30` ngầm quyết định bước chạy trước hay sau idempotency. Nhóm bước trước mốc bảo đảm trạm được xác thực và đúng site trước khi Edge trả kết quả đã lưu. Một phase được khai báo rõ khi đăng ký step sẽ giúp kiểm tra ràng buộc này khi thêm bước. [VerifyAccessUseCase](backend/src/main/java/tmc/access/application/VerifyAccessUseCase.java) · [VerificationPipelineTest](backend/src/test/java/tmc/access/application/VerificationPipelineTest.java)
+2. **SRP và trạng thái dùng chung.** `VerifyAccessUseCase` vừa điều phối pipeline, vừa giữ chỗ idempotency, tạo và lưu bản ghi từ chối, rồi xử lý trường hợp lỗi sau khi đã gửi lệnh. Các field public trong `AccessContext` khiến quan hệ giữa những bước này chỉ thể hiện qua thứ tự thực thi. Ví dụ, `GateCommandStep` dựa vào `persisted` và `attempt` do bước lưu thiết lập. Một phương thức ghi nhận attempt đã lưu có thể cập nhật cả hai cùng lúc và giữ điều kiện đó ngay trong context. [AccessContext](backend/src/main/java/tmc/access/application/AccessContext.java) · [GateCommandStepTest](backend/src/test/java/tmc/access/application/step/GateCommandStepTest.java)
+3. **Bằng chứng ở cấp step.** Test token trước đây dùng claim giả lập. Test riêng hiện ký và xác minh ES256 bằng khóa test, kiểm tra riêng sai `kid`, sai chữ ký và các biên skew. Ma trận credential, scope và anti-passback xác nhận mã từ chối của từng bước. Test HTTP/H2 kiểm tra hai hành vi phụ thuộc vào tích hợp là rollback JTI khi outbox lỗi và HTTP 409 khi request còn xử lý. [Test từng bước](backend/src/test/java/tmc/access/application/step/) · [EdgeFlowTest](backend/src/test/java/tmc/bootstrap/EdgeFlowTest.java)
+
+## Sai lệch so với thiết kế
+
+Phase 0–1 dùng `EDGE_VERIFY` và `STRICT` để mô tả cách vận hành khi mất WAN. Demo dùng trạng thái snapshot `FRESH` và `STALE` khi chạy ở cấu hình snapshot. `FRESH` cho phép tiếp tục kiểm tra cục bộ. Tại bước policy, `STALE` dẫn đến `SNAPSHOT_STALE` và bỏ qua bước gửi lệnh cổng. [ADR-05](Phase1_Architecture.md#3-architecture-decisions-adr-index)
+
 ## M2 Checklist
 
 ### So với yêu cầu triển khai Phase 2
@@ -326,17 +336,17 @@ Những ranh giới này cho phép test Access với fake Turnstile và thay rul
 | Pipeline và trạng thái | Các bước xác thực, chữ ký/thời gian, credential, policy, replay, anti-passback, transaction, lệnh và outcome. Ba trạng thái được giữ riêng. | Scope của trạm được kiểm tra trước khi trả một kết quả idempotent. Idempotency nằm trong use case. Passage là endpoint riêng và không nằm trên đường gửi lệnh. |
 | Port và contract | Wiring ở bootstrap. Attendance nhận `AttendanceEvent` và ghi bảng riêng. Edge và Central dùng `EdgeSyncEvent`. | UserQr dùng các port credential/token của Access và Attendance dùng policy/scope ports của Access. Sync ánh xạ DTO sang `AccessAttempt` ở bộ nhận. Ranh giới giữa các module chưa đạt quy tắc tuyệt đối chỉ import từ package `contract`. |
 | Runtime và tích hợp | Java 21, H2 JDBC transactions, outbox retry, ES256 và cấu hình snapshot. Domain và application không dùng Spring, JPA hay Jackson. | Adapter lưu trữ dùng Spring JDBC ngoài hai lớp API/bootstrap. Central receiver giữ dữ liệu trong bộ nhớ. Fake Turnstile, xác thực và ACK của HR là mô phỏng. Device-signed offline QR chỉ được mô tả trong ADR. |
-| Mức bao phủ test | Unit, contract, HTTP với H2, fault injection cho outbox và ArchUnit. | Còn thiếu test riêng cho một số nhánh xác minh như sai `kid`, sai credential version và tổ hợp scope. Load harness dùng Node.js, khác ví dụ JUnit/k6 trong yêu cầu triển khai. |
+| Mức bao phủ test | Test riêng cho cả 10 step, contract, HTTP với H2, fault injection cho outbox và ArchUnit. | Load harness dùng Node.js. Bộ test dùng dữ liệu và cấu hình demo. |
 
 ### Đối chiếu AC trong Phần I
 
 | AC | Bằng chứng đang có | Việc còn thiếu để nghiệm thu |
 | --- | --- | --- |
-| AC-01 · QR và từ chối | `VerificationPipelineTest` kiểm tra thời hạn, skew, issuer/audience và snapshot/policy. `EdgeFlowTest` kiểm tra allow, replay, anti-passback và tình huống lỗi lưu không phát lệnh. | Ma trận QR/credential đầy đủ với dữ liệu và policy TMC duyệt. |
+| AC-01 · QR và từ chối | Test riêng kiểm tra chữ ký ES256, `kid`, issuer/audience, biên thời gian, credential và thiết bị, station scope, snapshot, replay, anti-passback và lỗi lưu. `EdgeFlowTest` xác nhận không phát lệnh khi lưu thất bại. | Chạy ma trận QR/credential với dữ liệu và policy TMC duyệt. |
 | AC-02 · lệnh cổng và passage | `GateCommandSenderContractTest`, `AccessAttemptTest` và `EdgeFlowTest` kiểm tra outcome riêng với passage. | Kiểm thử theo API và nguồn cảm biến thực. |
 | AC-03 · Attendance Transaction | `EdgeFlowTest` kiểm tra ghi bản ghi và cờ HR review. `AttendanceEligibilityTest` kiểm tra ACKED-only. | Test từng trường employee, site, time, direction và evidence theo schema được duyệt. |
 | AC-04 · độ bền dữ liệu | `EdgeFlowTest` ép lỗi insert outbox, kiểm tra JTI rollback và không phát lệnh. | Khởi động lại Edge/Central và đối soát số liệu theo định nghĩa normal operation. |
-| AC-05 · idempotency | `EdgeFlowTest` kiểm tra replay kết quả cũ và hai request đồng thời dùng một JTI. `VerificationPipelineTest` kiểm tra trạng thái in-progress và không gửi lại lệnh sau timeout. | Kiểm thử thêm HTTP 409 khi duplicate đang xử lý và quy tắc retry trên thiết bị thật. |
+| AC-05 · idempotency | `EdgeFlowTest` kiểm tra replay kết quả cũ, hai request đồng thời dùng một JTI và HTTP 409 `REQUEST_IN_PROGRESS` có thể thử lại. `VerificationPipelineTest` kiểm tra trạng thái in-progress trong lúc gửi lệnh và việc gửi lệnh một lần khi retry sau timeout. | Kiểm thử quy tắc retry trên thiết bị thật. |
 | AC-06 · thời gian kiosk | [Đo tải local](backend/README.md) thực hiện 800 scan/site với hai site đồng thời trong 30 giây, chậm nhất 74,55 ms ở ranh giới HTTP Edge. | Chạy kịch bản chính thức 30 phút tại từng site và đo tới kiosk với LAN/Turnstile thật. |
 | AC-07 · gửi HR trước 12:00 ngày 1 | `EdgeFlowTest` dùng clock cố định, xác nhận batch tháng chỉ tạo một lần và lưu ACK mô phỏng trước trưa. | Schema, calendar, delivery ACK và đối soát với HR/Payroll thật. |
 | AC-08 · RBAC | `EdgeFlowTest` kiểm tra yêu cầu token, Admin bị từ chối đọc attendance, scope Employee và quyền export của HR. | Ma trận role/scope TMC phê duyệt và test quản trị role/config. |

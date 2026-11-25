@@ -9,3 +9,4 @@
 *.keystore
 *.mv.db
 *.trace.db
+/verification-logs/
