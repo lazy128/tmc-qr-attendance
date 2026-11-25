@@ -4,16 +4,12 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import tmc.access.infrastructure.security.DemoAccessPolicy;
+import tmc.shared.DemoIdentity;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.clock.SystemClockProvider;
 import tmc.shared.id.IdGenerator;
 import tmc.shared.id.UuidGenerator;
-import tmc.shared.outbox.CentralSyncReceiver;
-import tmc.shared.DemoIdentity;
-import tmc.access.infrastructure.DemoAccessPolicy;
-import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.web.client.RestTemplate;
-import java.time.Duration;
 
 @Configuration
 public class SharedConfiguration {
@@ -43,14 +39,5 @@ public class SharedConfiguration {
   @Bean
   IdGenerator idGenerator() {
     return new UuidGenerator();
-  }
-
-  @Bean
-  CentralSyncReceiver centralSyncReceiver() {
-    return new CentralSyncReceiver();
-  }
-
-  @Bean RestTemplate centralHttpClient(RestTemplateBuilder builder) {
-    return builder.connectTimeout(Duration.ofMillis(500)).readTimeout(Duration.ofSeconds(2)).build();
   }
 }

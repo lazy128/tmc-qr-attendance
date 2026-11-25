@@ -10,7 +10,7 @@ import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 import tmc.access.domain.port.SnapshotProvider;
-import tmc.access.infrastructure.JdbcAttemptStore;
+import tmc.access.infrastructure.persistence.JdbcAttemptStore;
 import tmc.shared.clock.ClockProvider;
 
 @Component("edgeHealthIndicator")

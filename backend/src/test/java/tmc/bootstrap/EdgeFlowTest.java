@@ -31,10 +31,11 @@ import org.springframework.boot.web.servlet.context.ServletWebServerApplicationC
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import tmc.access.application.ScopeResolver;
-import tmc.access.infrastructure.FakeTurnstileAdapter;
-import tmc.access.infrastructure.JdbcCredentialStore;
+import tmc.access.infrastructure.turnstile.FakeTurnstileAdapter;
+import tmc.access.infrastructure.persistence.JdbcCredentialStore;
 import tmc.access.domain.port.Credential;
 import tmc.attendance.application.AttendanceRecordStore;
+import tmc.bootstrap.worker.HrExportWorker;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.audit.AuditHash;
 import tmc.shared.web.CorrelationIdFilter;
@@ -155,6 +156,26 @@ class EdgeFlowTest {
         .extracting(node -> node.path("command").asText())
         .containsExactlyInAnyOrder("ACKED", "NOT_SENT");
     assertThat(java.util.List.of(a.join(), b.join())).anyMatch(node -> "REPLAY".equals(node.path("reasonCode").asText()));
+  }
+
+  @Test
+  void centralEndpointAcceptsAndDeduplicatesThePersistedOutboxPayload() throws Exception {
+    app.getBean(JdbcCredentialStore.class).save(new Credential(
+        "sync-credential", "sync-employee", 1, true, "sync-device"
+    ));
+    var scan = scan("sync-credential", "sync-device", "ENTRY");
+    assertThat(verify(scan).path("command").asText()).isEqualTo("ACKED");
+    var jdbc = app.getBean(JdbcTemplate.class);
+    String payload = jdbc.queryForObject(
+        "SELECT payload FROM edge_outbox WHERE event_id=?", String.class, scan.get("eventId")
+    );
+    var batch = json.createArrayNode().add(json.readTree(payload));
+    var first = post("/edge/v1/sync", batch, null);
+    var retry = post("/edge/v1/sync", batch, null);
+    assertThat(first.statusCode()).isEqualTo(200);
+    assertThat(retry.statusCode()).isEqualTo(200);
+    assertThat(json.readTree(first.body()).get(0).path("status").asText()).isEqualTo("ACCEPTED");
+    assertThat(json.readTree(retry.body()).get(0).path("status").asText()).isEqualTo("DUPLICATE");
   }
 
   @Test

@@ -26,8 +26,8 @@ import tmc.access.domain.SiteId;
 import tmc.access.domain.StationId;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.port.GateResult;
-import tmc.access.infrastructure.InMemoryEdgeStore;
-import tmc.access.infrastructure.MutableSnapshot;
+import tmc.access.infrastructure.persistence.InMemoryEdgeStore;
+import tmc.access.infrastructure.snapshot.MutableSnapshot;
 
 class VerificationPipelineTest {
   private static final Instant NOW = Instant.parse("2026-11-25T10:00:00Z");

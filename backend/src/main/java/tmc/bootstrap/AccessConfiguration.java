@@ -28,16 +28,16 @@ import tmc.access.domain.port.GateResult;
 import tmc.access.domain.port.SnapshotProvider;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.AccessRequest;
-import tmc.access.infrastructure.EdgeSecuritySimulation;
-import tmc.access.infrastructure.Es256TokenCodec;
-import tmc.access.infrastructure.FakeTurnstileAdapter;
-import tmc.access.infrastructure.FileSnapshotProvider;
-import tmc.access.infrastructure.JdbcCredentialStore;
-import tmc.access.infrastructure.JdbcPresenceTracker;
-import tmc.access.infrastructure.JdbcAttemptStore;
-import tmc.access.infrastructure.MeteredGateCommandSender;
-import tmc.access.infrastructure.MutableSnapshot;
-import tmc.access.infrastructure.TimeoutGateCommandSender;
+import tmc.access.infrastructure.security.EdgeSecuritySimulation;
+import tmc.access.infrastructure.security.Es256TokenCodec;
+import tmc.access.infrastructure.turnstile.FakeTurnstileAdapter;
+import tmc.access.infrastructure.snapshot.FileSnapshotProvider;
+import tmc.access.infrastructure.persistence.JdbcCredentialStore;
+import tmc.access.infrastructure.persistence.JdbcPresenceTracker;
+import tmc.access.infrastructure.persistence.JdbcAttemptStore;
+import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
+import tmc.access.infrastructure.snapshot.MutableSnapshot;
+import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
 import tmc.shared.clock.ClockProvider;
 
 @Configuration

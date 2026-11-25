@@ -5,6 +5,7 @@ import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 @AnalyzeClasses(packages = "tmc", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureRulesTest {
@@ -12,13 +13,18 @@ class ArchitectureRulesTest {
   static final ArchRule domainMustNotDependOnInfrastructureOrSpring = noClasses()
       .that().resideInAPackage("tmc..domain..")
       .should().dependOnClassesThat()
-      .resideInAnyPackage("tmc..infrastructure..", "org.springframework..", "jakarta.persistence..");
+      .resideInAnyPackage("tmc..infrastructure..", "org.springframework..", "jakarta.persistence..", "com.fasterxml.jackson..");
 
   @ArchTest
   static final ArchRule applicationMustNotDependOnInfrastructureOrSpring = noClasses()
       .that().resideInAPackage("tmc..application..")
       .should().dependOnClassesThat()
-      .resideInAnyPackage("tmc..infrastructure..", "org.springframework..", "jakarta.persistence..");
+      .resideInAnyPackage("tmc..infrastructure..", "org.springframework..", "jakarta.persistence..", "com.fasterxml.jackson..");
+
+  @ArchTest
+  static final ArchRule modulesMustNotHaveDependencyCycles = slices()
+      .matching("tmc.(*)..")
+      .should().beFreeOfCycles();
 
   @ArchTest
   static final ArchRule accessDoesNotImportOtherModuleInfrastructure = noClasses()
