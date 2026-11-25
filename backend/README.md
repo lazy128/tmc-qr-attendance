@@ -82,7 +82,7 @@ Metric quyết định và timer xuất hiện sau khi có request tương ứng
 .\mvnw.cmd -B verify
 ```
 
-Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B test`. Test tích hợp mở cổng loopback tạm và dùng H2 trong bộ nhớ. Workflow CI chạy các test backend trên Ubuntu. [Bộ test backend](src/test/java/tmc/) · [Đối chiếu test theo AC](../docs/solid-and-traceability.md)
+Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B test`. Test tích hợp mở cổng loopback tạm và dùng H2 trong bộ nhớ. Workflow CI chạy các test backend trên Ubuntu. [Bộ test backend](src/test/java/tmc/) · [Đối chiếu test theo AC](../README.md#m2-checklist)
 
 Sau lần tổ chức lại package, `mvnw.cmd verify` chạy thành công **29 test** và đóng gói JAR. Test mới kiểm tra vòng phụ thuộc, tính tương thích của payload đang lưu và việc Central nhận lại cùng payload mà không xử lý trùng.
 
@@ -95,4 +95,4 @@ Sau lần tổ chức lại package, `mvnw.cmd verify` chạy thành công **29 
 
 Số liệu trên là lần đo trước khi bổ sung observability. Phép đo tính từ HTTP request đến khi Node đọc được response Edge, chưa gồm thời gian render kiosk, LAN và Turnstile thật. Kịch bản nghiệm thu 30 phút chưa được chạy.
 
-[Module và luồng xử lý](../docs/architecture.md) · [SOLID, checklist và sai lệch so với thiết kế](../docs/solid-and-traceability.md)
+[Ba view kiến trúc](../README.md#architecture-views) · [SOLID](../README.md#solid) · [Checklist và sai lệch](../README.md#m2-checklist)

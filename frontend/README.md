@@ -46,4 +46,4 @@ Lần kiểm tra gần nhất chạy qua **5 test**, kiểm tra TypeScript và b
 | Đọc chấm công | `GET /attendance/v1/records` với bearer token |
 | Tải CSV | `GET /reports/v1/exports?month=YYYY-MM` với bearer token HR |
 
-[Cấu hình và vận hành Edge](../backend/README.md) · [Kiến trúc tổng thể](../docs/architecture.md)
+[Cấu hình và vận hành Edge](../backend/README.md) · [Ba view kiến trúc](../README.md#architecture-views)

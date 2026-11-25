@@ -117,47 +117,33 @@ Each ADR below records a proposed decision, alternatives, and trade-offs. These 
 
 ### 4.1 Primary presentation
 
+**MV-2 · Decomposition and uses, design proposal.** Boxes denote implementation units. Containment means `is-part-of`. A dashed arrow points from a unit that **depends on** a declaration to the unit that owns that declaration. The picture uses the box-and-line notation in Chapter 6, slides 17 and 27–30. It describes source structure and includes planned modules.
+
 ```mermaid
 flowchart LR
-  subgraph Access[Access / FR-03]
-    AAPI[api: VerifyAccessController]
-    AAPP[application: VerifyAccessUseCase]
-    PIPE[application: ordered VerificationStep pipeline]
-    ADOM[domain: AccessAttempt, Decision, CommandState, PassageState]
-    AINF[infrastructure: persistence, gate, token, audit adapters]
-    AAPI --> AAPP --> PIPE --> ADOM
-    AAPP -. ports .-> AINF
+  subgraph TMC["«system» TMC software"]
+    Boot["Composition root"]
+    subgraph Access["«module» Access · FR-03"]
+      Api["«package» API"]
+      App["«package» Application"]
+      Dom["«package» Domain / ports"]
+      Infra["«package» Adapters"]
+      Api -.->|uses| App
+      App -.->|uses| Dom
+      Infra -.->|implements ports| Dom
+    end
+    QR["UserQr · FR-01"]
+    Att["Attendance · FR-04"]
+    St["Station Mgmt · FR-02"]
+    Admin["Admin · FR-05"]
+    Boot -.-> Api
+    Boot -.-> Infra
+    Boot -.->|event contract| Att
+    App -.->|credential| QR
+    App -.->|registry| St
+    App -.->|policies| Admin
+    Att -.->|scope| Admin
   end
-  subgraph UserQr[UserQr / FR-01]
-    QAPI[api: QR controllers]
-    QAPP[application: Issue/Revoke use cases]
-    QDOM[domain: Credential, version, status]
-    QINF[infrastructure: signer, key store, credential repository]
-    QAPI --> QAPP --> QDOM
-    QAPP -. ports .-> QINF
-  end
-  subgraph Attendance[Attendance / FR-04]
-    TAPI[api: records/export endpoints]
-    TAPP[application: eligibility and export use cases]
-    TDOM[domain: EligibilityPolicy, ExportBatch]
-    TINF[infrastructure: repository, HR adapter, outbox]
-    TAPI --> TAPP --> TDOM
-    TAPP -. ports .-> TINF
-  end
-  subgraph StationAdmin[Station Management / FR-02]
-    STAPI[station inventory and status API]
-    STDOM[GateStation registry/config/status]
-    STAPI --> STDOM
-  end
-  subgraph SystemAdmin[System Administration / FR-05]
-    RAPI[role/permission/config API]
-    RDOM[RBAC and configuration policies]
-    RAPI --> RDOM
-  end
-  Access -->|attendance event contract / outbox| Attendance
-  UserQr -->|credential read contract| Access
-  StationAdmin -. registry contract .-> Access
-  SystemAdmin -. policy/config contract .-> Access
 ```
 
 ### 4.2 Element catalog and interfaces
@@ -187,93 +173,168 @@ Core access request carries `eventId`, `correlationId`, `siteId`, `stationId`, `
 
 Required fields include `employeeId` (nullable for early denial), `credentialId`, `credentialVersion`, `evidenceLevel`, `offlineAccepted`, and `exportStatus`. QR subject is credential ID, never employee PII. Error envelope: `code`, `message` (safe), `correlationId`, `retryable`, optional field errors. Reason codes include `TOKEN_EXPIRED`, `REPLAY`, `REVOKED`, `CVER_MISMATCH`, `DEVICE_MISMATCH`, `ANTI_PASSBACK`, `STATION_SCOPE`, `POLICY_DENIED`, `PERSIST_FAILED`, `STATION_AUTH_FAILED`, `NOT_YET_VALID`, and `CLOCK_SKEW`.
 
+### 4.4 Variability and design rationale
+
+Access defines its policy and integration ports. The composition root selects implementations and maps access results to the Attendance contract. Eligibility is a replaceable policy. Station and administration modules own the contracts used by Access in this proposal. The [implemented module view](README.md#module-view) records the package dependencies that actually exist in Phase 2.
+
 ## 5. Component-and-connector view
 
-### 5.1 Runtime presentation
+### 5.1 Primary presentation
 
-Topology decision (proposed): every Gate Station talks only to its factory Edge Agent over the factory LAN. Edge is the authoritative kiosk-path gateway and local verifier in both connected and disconnected operation, not merely a fallback proxy. Central services distribute signed policy/key/revocation snapshots to Edge and receive access, audit, and attendance events asynchronously. This avoids a WAN round trip per scan and preserves local operation during WAN loss. The trade-off is bounded policy/revocation staleness; if the snapshot exceeds 15 minutes (proposed), Edge fails closed to STRICT and asks staff for assistance.
+**CC-2 · Runtime topology, design proposal.** Both panels refer to the same factory Edge instance. A frame names a runtime instance using `instance : type`. A small box is a port. Numbered attachments run between ports and are interpreted by the connector catalog. Solid arrows point from the caller to the callee, thick arrows identify database access, and dashed arrows follow asynchronously delivered data. See Chapter 6, slides 36–43 and 45–51.
+
+**CC-2a · Factory scan path**
 
 ```mermaid
 flowchart LR
-  Phone[Employee phone] -->|HTTPS OIDC token issue/revoke| Central[Central API]
-  Station[Gate Station] -->|LAN mTLS + signed timestamped event| Edge[Factory Edge Agent]
-  Edge -->|verify, dedupe, policy, presence, durable local transaction| Local[(Edge durable store)]
-  Edge -->|LAN commandId| Turnstile[Turnstile controller]
-  Turnstile -.->|optional passage evidence| Edge
-  Edge -->|asynchronous idempotent sync; snapshot pull| Central
-  Central --> DB[(PostgreSQL: Access + Attendance contracts/outbox)]
-  DB --> Worker[Central outbox / reporting / HR export]
-  Worker -->|HTTPS batch| HR[HR/Payroll]
-  Admin[Admin / HR / Supervisor / Guard / Management] -->|HTTPS + RBAC/scope| Central
+  subgraph Station["station : Client"]
+    sv["verifyClient"]
+  end
+  subgraph Edge["edge : Edge Agent"]
+    ev["verifyApi"]
+    ed["storeClient"]
+    eg["gateClient"]
+    ep["passageSink"]
+    ev ~~~ ed
+    ev ~~~ eg
+  end
+  subgraph Local["local : Store"]
+    localdb["transaction"]
+  end
+  subgraph Gate["gate : Turnstile"]
+    gi["commandApi"]
+    go["evidence"]
+  end
+  sv -->|P1| ev
+  ed ==>|P2| localdb
+  eg -->|P3| gi
+  go -.->|P4| ep
+  classDef port fill:#fff,stroke:#416785,color:#172a3a,font-size:13px;
+  class sv,ev,ed,eg,ep,localdb,gi,go port;
 ```
 
-### 5.2 Connector catalog
+**CC-2b · Central integration**
 
-| Connector | Semantics |
+```mermaid
+flowchart LR
+  subgraph Edge["edge : Edge Agent"]
+    es["syncClient"]
+    ek["snapshotSink"]
+  end
+  subgraph Central["central : API"]
+    cq["userApi"]
+    cs["syncApi"]
+    ck["snapshots"]
+    cd["storeClient"]
+    ch["payrollClient"]
+  end
+  subgraph Console["users : Client"]
+    qa["userClient"]
+  end
+  subgraph Store["records : Store"]
+    store["transaction"]
+  end
+  subgraph HR["payroll : HR API"]
+    hi["importApi"]
+  end
+  es -.->|P5| cs
+  ck -.->|P6| ek
+  qa -->|P7| cq
+  cd ==>|P8| store
+  ch -.->|P9| hi
+  classDef port fill:#fff,stroke:#416785,color:#172a3a,font-size:13px;
+  class es,ek,cq,cs,ck,cd,ch,qa,store,hi port;
+```
+
+### 5.2 Element catalog and interface behavior
+
+| Runtime instance | Responsibility |
 |---|---|
-| Phone → central QR API | HTTPS/OIDC; normal QR token issuance. Device-signed offline QR remains an ADR only, outside Phase 2 implementation. |
-| Station → Edge | LAN HTTPS/mTLS and signed timestamped request; station scope enforced locally. |
-| Edge → local store | Durable local transaction for attempt, JTI, outbox, and `SENT` intent before controller command. |
-| Edge → Turnstile | Synchronous LAN command with stable `commandId`; timeout transitions to UNKNOWN and is reconciled, not blindly retried. |
-| Edge → Central | Asynchronous at-least-once sync; deduplicate by event ID; conflicts (same JTI at different sites) become SUSPICIOUS. |
-| Central → Edge | Signed configuration/key/revocation snapshots, pushed/pulled independently of kiosk requests. |
-| Central → HR | Asynchronous idempotent batch; ACK/partial/unknown reconciliation. |
-| Users → Central | HTTPS APIs for station management, attendance queries/reports, RBAC/config, audit. |
+| `station`, `edge` | The station submits scans. Edge verifies, records the decision and coordinates local gate commands. |
+| `local`, `gate` | The store owns local durability and the outbox. The vendor controller executes commands and may publish passage evidence. |
+| `users`, `central` | Phone and operations clients use Central APIs. Central receives Edge events, distributes snapshots and prepares payroll batches. |
+| `records`, `payroll` | Central data store and external HR/Payroll import service. |
+
+The following catalog defines the connector roles used by each numbered attachment.
+
+| ID | Initiator / producer → participant | Contract and behavior |
+|---|---|---|
+| P1 | Gate Client → Edge verifier | Request/response on the factory LAN. Proposed station mTLS and signed timestamped event. Response carries decision, command outcome and passage separately. |
+| P2 | Edge transaction client → local store | Local transaction commits attempt, JTI, SENT intent, audit and outbox before issuing a gate command. A second transaction records the outcome. |
+| P3 | Edge gate client → Turnstile command API | Synchronous LAN command with stable `commandId`. Timeout yields UNKNOWN and triggers a status query instead of a new open command. |
+| P4 | Gate evidence publisher → Edge passage sink | Optional evidence notification. This source is separate from command acknowledgment. |
+| P5 | Edge sync producer → Central sync consumer | Durable asynchronous delivery with event identity, possible retransmission and Central deduplication. Cross-site JTI reuse is detected after sync. |
+| P6 | Central snapshot publisher → Edge snapshot consumer | Signed key, revocation and policy snapshots. The arrow indicates snapshot data direction. Edge may fetch them outside the scan request. |
+| P7 | Phone or operations client → Central user API | HTTPS/OIDC for QR issuance. Role and scope checks apply to administrative, audit, reporting and attendance operations. |
+| P8 | Central storage client → central store | Transactional access to Central data using module ownership and event contracts. |
+| P9 | Central export producer → HR import consumer | Out-of-band idempotent batch export, with ACK/partial/unknown reconciliation subject to the HR contract. |
 
 ### 5.3 Timing, failure, and kiosk response
 
 Proposed LAN-path budget (not a measured result): station/Edge auth and request validation 100ms; signature/credential/policy/anti-passback 150ms; local durable transaction including `SENT` and outbox 200ms; Turnstile LAN wait up to 800ms; outcome persistence (ACK or timeout) 150ms; response/rendering overhead 150ms. Total 1,550ms, leaving 450ms under NFR-01's unchanged ≤2s cap. If ACK/timeout persistence is delayed or fails, Edge must not return a false completed success; it displays “Đang xác minh trạng thái cổng — vui lòng chờ bảo vệ hỗ trợ” (status being verified; contact the guard), retains the durable event, and raises an operational alert. The 2-second boundary still requires TMC confirmation and end-to-end measurement. WAN and HR are excluded from the scan path by topology.
 
+### 5.4 Variability and design rationale
+
+The station always calls Edge on the scan path. Changing WAN connectivity affects P5 and P6 independently. The local verifier continues with an allowed fresh snapshot and fails closed once that snapshot is stale. P4 depends on available sensor evidence. The offline device-signed QR proposal appears in ADR-07. The [current runtime view](README.md#component-and-connector-view) shows which components are simulated in Phase 2.
+
 ## 6. Allocation view
 
-### 6.1 Deployment presentation
+### 6.1 Primary presentation · Deployment style
+
+**AL-2 · Target hardware allocation, design proposal.** Site frames group physical nodes. Device/node frames contain execution environments and artifacts deployed there. Undirected associations between nodes identify communication media. Storage and CPU sizing remain to be confirmed. This follows Chapter 6, slides 52–56 and 62–64.
 
 ```mermaid
 flowchart TB
-  subgraph FactoryBD[Binh Duong]
-    PhoneBD[Employee phones]
-    GSBD[Gate Stations]
-    EdgeBD[Edge Agent + cached public keys/policy/revocation + durable queue]
-    TurnBD[Turnstile controllers]
-    GSBD --> EdgeBD --> TurnBD
+  subgraph BD["Factory site · Binh Duong"]
+    BDS["«device» Station PC BD<br/>«artifact» Gate client"]
+    subgraph BDE["«device» Edge host BD"]
+      BDR["«execution environment» JVM<br/>«artifact» Edge Agent"]
+      BDD["«artifact» Local store and outbox file"]
+    end
+    BDT["«device» Turnstile controller BD<br/>Vendor firmware"]
+    BDS ---|factory LAN| BDE
+    BDE ---|factory LAN| BDT
   end
-  subgraph FactoryLA[Long An]
-    PhoneLA[Employee phones]
-    GSLA[Gate Stations]
-    EdgeLA[Edge Agent + cached public keys/policy/revocation + durable queue]
-    TurnLA[Turnstile controllers]
-    GSLA --> EdgeLA --> TurnLA
+  subgraph LA["Factory site · Long An"]
+    LAS["«device» Station PC LA<br/>«artifact» Gate client"]
+    subgraph LAE["«device» Edge host LA"]
+      LAR["«execution environment» JVM<br/>«artifact» Edge Agent"]
+      LAD["«artifact» Local store and outbox file"]
+    end
+    LAT["«device» Turnstile controller LA<br/>Vendor firmware"]
+    LAS ---|factory LAN| LAE
+    LAE ---|factory LAN| LAT
   end
-  subgraph Central[Central environment]
-    LB[API ingress]
-    App[Modular monolith application]
-    DB[(PostgreSQL: primary + backup/recovery)]
-    Jobs[Outbox / reconciliation / HR export workers]
-    KMS[Signing key store / KMS]
-    LB --> App
-    App --> DB
-    App --> KMS
-    DB --> Jobs
+  subgraph HQ["Central environment"]
+    subgraph CH["«node» Central app host"]
+      CR["«execution environment» JVM<br/>«artifact» Central API and workers"]
+    end
+    DBH["«node» Central DB host<br/>«artifact» PostgreSQL and data files"]
+    KEY["«external node» Managed key service"]
+    CH ---|private network| DBH
+    CH ---|protected network| KEY
   end
-  GSBD -->|LAN| EdgeBD
-  GSLA -->|LAN| EdgeLA
-  EdgeBD <-->|async WAN sync / config| LB
-  EdgeLA <-->|async WAN sync / config| LB
-  Jobs -->|HTTPS adapter| HR[HR/Payroll]
+  PH["«device» Employee smartphone<br/>«artifact» QR client"]
+  HRH["«external node» HR platform<br/>«artifact» Payroll import service"]
+  BDE ---|WAN| CH
+  LAE ---|WAN| CH
+  PH ---|Internet| CH
+  CH ---|partner network| HRH
 ```
 
-### 6.2 Allocation catalog and variability guide
+### 6.2 Allocation catalog, variability and rationale
 
-| Node | Allocated elements | Variability / operational guidance |
+| Physical node | Software allocated from the C&C view | Operational properties / variants |
 |---|---|---|
-| Employee phone | QR client, OIDC session, device private key where supported | Connected issuance is normal proposal; fallback signed QR requires enrolled key. No long-lived static QR. |
-| Gate Station | Scanner, station certificate, request-signing key, station configuration | Calls only local Edge over LAN; cert rotation/revocation; direction and site identity from registry. |
-| Edge Agent (each factory) | Primary kiosk verifier/controller gateway, cached public keys/policy/revocation, local JTI/presence, durable Access store/outbox, LAN Turnstile adapter | Handles all scans; WAN only sync/config. Proposed 15m freshness bound; stale snapshot forces STRICT. Queue encryption, disk capacity, restart recovery, and duplicate reconciliation required. |
-| Central application | API and three modules, policy/config, RBAC and scope checks | Horizontally deployable behind ingress; schema changes via Flyway; maintain module dependency rules. |
-| PostgreSQL | Attempts, credentials, token use, audit, outbox, export batches | Backups, restore drills, uniqueness constraints and transaction isolation must be operationally verified. |
-| Worker runtime | Outbox dispatch, command reconciliation, edge sync, HR batch export | Independent concurrency and retry policies; never block kiosk path for HR export. |
-| KMS/key store | QR signing keys and rotation metadata | No secrets in source or logs; rotate by `kid`, protect private keys. |
-| Turnstile / HR | Vendor-owned endpoints | Adapter remains simulation/skeleton until contract and sandbox are provided. |
+| Employee smartphone | QR client and OIDC session | Connected issuance is the proposed normal path. Device-signed offline QR requires an enrolled key. |
+| Gate Station PC at each site | Gate client, scanner integration and station-specific configuration | LAN access only to its site’s Edge on the scan path. The station identity and direction come from the approved registry and event contract. |
+| Edge host at each site | Edge Agent JVM, verifier, adapters, snapshot, local database and durable outbox | Persistent local disk and access to the station and Turnstile LAN are required. Disk sizing, encryption and restart recovery require verification. WAN is used for sync and snapshot distribution. |
+| Central app host | Central API, sync receiver, snapshot distribution and export workers | Workers can be allocated separately when deployment capacity requires it. Verify the isolation of background work from request processing. |
+| Central database host | Central PostgreSQL and data volumes | Backups, restore drills, uniqueness constraints and transaction isolation require operational verification. |
+| Managed key service | Signer key and rotation service | Keep key material out of source and logs. Rotation is identified by `kid`. |
+| Turnstile and HR nodes | Vendor firmware and payroll import API | Their network and authentication contracts remain open. Phase 2 uses simulations. |
+
+**Mapping across the views.** The Access implementation units in MV-2 contribute to the Edge runtime instance in CC-2. AL-2 places that runtime and its local store on a device at each site. The Edge-to-Central connectors in CC-2 use WAN associations in AL-2. The [demo allocation](README.md#allocation-view) collapses the runtime onto one host to run Task 2.
 
 ## 7. Domain model, state machines, and data design
 
@@ -391,7 +452,7 @@ sequenceDiagram
     A->>T: open(commandId)
     T--xA: timeout
     A->>DB: command=UNKNOWN
-    A-->>S: decision ALLOW, command UNKNOWN; reconcile, no blind retry
+    A-->>S: decision ALLOW, command UNKNOWN (reconcile without retry)
   end
 ```
 
@@ -414,7 +475,7 @@ sequenceDiagram
     T-->>G: ACK or UNKNOWN
     G->>G: durable OFFLINE_ACCEPTED queue
     G-->>C: later idempotent sync
-    Note over G,C: Cross-site JTI reuse detected only after sync; review suspicious conflicts
+    Note over G,C: Cross-site JTI reuse detected only after sync. Review suspicious conflicts.
   else snapshot stale
     G->>G: fall back to STRICT
   end
