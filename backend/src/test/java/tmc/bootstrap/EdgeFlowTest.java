@@ -104,6 +104,25 @@ class EdgeFlowTest {
   }
 
   @Test
+  void duplicateWithAnInProgressReservationReturnsRetryableConflict() throws Exception {
+    app.getBean(JdbcCredentialStore.class).save(new Credential(
+        "pending-credential", "pending-employee", 1, true, "pending-device"
+    ));
+    var entry = scan("pending-credential", "pending-device", "ENTRY");
+    assertThat(verify(entry).path("command").asText()).isEqualTo("ACKED");
+
+    // Keep the stored fingerprint and simulate an in-progress request after the prepared write.
+    var jdbc = app.getBean(JdbcTemplate.class);
+    assertThat(jdbc.update("UPDATE idempotency_request SET state='IN_PROGRESS' WHERE event_id=?", entry.get("eventId")))
+        .isEqualTo(1);
+    var conflict = post("/access/v1/verify", entry, null);
+    assertThat(conflict.statusCode()).isEqualTo(409);
+    var error = json.readTree(conflict.body());
+    assertThat(error.path("code").asText()).isEqualTo("REQUEST_IN_PROGRESS");
+    assertThat(error.path("retryable").asBoolean()).isTrue();
+  }
+
+  @Test
   void failedOutboxInsertRollsBackJtiAndDoesNotSendCommand() throws Exception {
     var jdbc = app.getBean(JdbcTemplate.class);
     var turnstile = app.getBean(FakeTurnstileAdapter.class);
