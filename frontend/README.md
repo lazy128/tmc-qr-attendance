@@ -1,29 +1,49 @@
-# TMC Attendance Console
+# Frontend console
 
-React and TanStack Start frontend for the TMC QR access and attendance Edge API.
+Console React và TanStack Start mô phỏng Gate Station và giao diện tra cứu chấm công. UI chỉ gửi request và hiển thị kết quả. Edge là nơi kiểm tra QR, ra quyết định và áp dụng quyền đọc dữ liệu.
 
-## Run
+## Chạy và kiểm thử
 
-1. Copy `.env.example` to `.env` and set `VITE_EDGE_API_URL` to the Edge Agent URL.
-2. Install the locked dependencies with `npm ci` (Node.js 24).
-3. Start the development server with `npm run dev`.
-4. For the attendance tab, enter the corresponding demo bearer token configured on the backend. The download action requires the HR token.
+Cần Node.js 24. Chạy trong `frontend/`.
 
-## API modules
+```powershell
+Copy-Item .env.example .env
+npm ci
+npm run dev
+```
 
-- `src/modules/access/api`: gate verification with station, correlation, and idempotency headers.
-- `src/modules/userqr/api`: token issue and credential revoke.
-- `src/modules/attendance/api`: attendance record query.
-- `src/modules/shared/http`: common JSON request/error handling.
+`.env.example` đặt `VITE_EDGE_API_URL=http://localhost:8080`. Console chạy ở `http://localhost:5173`. Nếu đổi host hoặc cổng frontend, cấu hình `tmc.cors.origins` ở Edge cho đúng origin. Nhập bearer token demo do backend cấu hình ở tab Attendance. Nút tải CSV yêu cầu token HR.
 
-| Action | Request |
-|---|---|
-| Issue a short-lived QR | `POST /qr/v1/tokens` |
-| Revoke a credential | `POST /qr/v1/credentials/{id}/revoke` |
-| Verify an access scan | `POST /access/v1/verify` |
-| Load attendance records | `GET /attendance/v1/records` |
-| Download monthly attendance CSV | `GET /reports/v1/exports?month=YYYY-MM` |
+```sh
+npm test
+npm run typecheck
+npm run build
+```
 
-Run `npm test`, `npm run typecheck`, and `npm run build` after installing dependencies. The package names and versions are pinned in `package-lock.json`.
+Các test kiểm tra route `/` và hợp đồng API qua `fetch` giả lập. [Test frontend](src/test)
 
-The local demo API simulates station authentication, user authentication, and Turnstile behavior. Do not use production employee data with the demo configuration.
+Lần kiểm tra gần nhất chạy qua **5 test**, kiểm tra TypeScript và build client/server.
+
+## Tìm code theo chức năng
+
+| Vị trí | Trách nhiệm |
+| --- | --- |
+| [`src/routes/`](src/routes/) | Route TanStack và layout của ứng dụng. |
+| [`modules/console/`](src/modules/console/) | Ghép các tab và điều phối tương tác bằng `useEdgeConsole`. |
+| [`modules/access/`](src/modules/access/) | Form scan, API verify và kết quả tách riêng decision, command, passage. |
+| [`modules/userqr/api/`](src/modules/userqr/api/) | Client cấp và thu hồi QR. Nút demo được đặt cạnh form scan để thao tác liền mạch. |
+| [`modules/attendance/`](src/modules/attendance/) | API tra cứu theo scope, bảng chấm công và tải CSV. |
+| [`modules/shared/`](src/modules/shared/) | HTTP client, địa chỉ Edge, chuẩn hóa lỗi và thành phần UI dùng chung. |
+| [`src/components/ui/`](src/components/ui/) | Thư viện thành phần giao diện có thể tái sử dụng. |
+
+## Hợp đồng với Edge
+
+| Tác vụ | API |
+| --- | --- |
+| Cấp QR ngắn hạn | `POST /qr/v1/tokens` |
+| Thu hồi credential | `POST /qr/v1/credentials/{id}/revoke` |
+| Quét cổng | `POST /access/v1/verify` với `X-Station-Id`, `Idempotency-Key` và `X-Correlation-Id` |
+| Đọc chấm công | `GET /attendance/v1/records` với bearer token |
+| Tải CSV | `GET /reports/v1/exports?month=YYYY-MM` với bearer token HR |
+
+[Cấu hình và vận hành Edge](../backend/README.md) · [Kiến trúc tổng thể](../docs/architecture.md)
