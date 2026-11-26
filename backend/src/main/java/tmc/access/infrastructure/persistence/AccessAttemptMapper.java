@@ -39,7 +39,7 @@ final class AccessAttemptMapper {
         Passage.valueOf(rs.getString("passage_state")),
         rs.getBoolean("offline_accepted"),
         evidence == null ? null : Evidence.valueOf(evidence),
-        rs.getBoolean("suspicious")
+        rs.getBoolean("suspicious"), rs.getBoolean("attendance_gate")
     );
   }
 

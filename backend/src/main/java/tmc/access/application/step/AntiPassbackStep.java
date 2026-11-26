@@ -26,7 +26,7 @@ public final class AntiPassbackStep implements VerificationStep {
 
   @Override
   public StepResult execute(AccessRequest request, AccessContext context) {
-    return presence.allowed(request.siteId().value(), context.employeeId, request.direction())
+    return !context.attendanceGate || presence.allowed(request.siteId().value(), context.employeeId, request.direction())
         ? StepResult.ok()
         : StepResult.deny(Reason.ANTI_PASSBACK);
   }

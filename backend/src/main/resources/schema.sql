@@ -112,6 +112,51 @@ CREATE TABLE IF NOT EXISTS station_registry (
   status VARCHAR(20) NOT NULL,
   last_heartbeat_at TIMESTAMP WITH TIME ZONE
 );
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS display_name VARCHAR(150);
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS gate_type VARCHAR(24) DEFAULT 'ATTENDANCE_GATE' NOT NULL;
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS allowed_groups VARCHAR(80) DEFAULT 'STAFF,MANAGER,EXECUTIVE' NOT NULL;
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS directions VARCHAR(24) DEFAULT 'ENTRY,EXIT' NOT NULL;
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS opens_at TIME;
+ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS closes_at TIME;
+ALTER TABLE access_attempt ADD COLUMN IF NOT EXISTS attendance_gate BOOLEAN DEFAULT TRUE NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_attendance_employee_time ON attendance_record(employee_id, scanned_at);
+
+CREATE TABLE IF NOT EXISTS daily_timesheet (
+  employee_id VARCHAR(120) NOT NULL,
+  work_date DATE NOT NULL,
+  site_id VARCHAR(100) NOT NULL,
+  first_in TIMESTAMP WITH TIME ZONE,
+  last_out TIMESTAMP WITH TIME ZONE,
+  worked_minutes BIGINT NOT NULL,
+  status VARCHAR(24) NOT NULL,
+  review_flag BOOLEAN NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  PRIMARY KEY(employee_id, work_date)
+);
+
+CREATE TABLE IF NOT EXISTS timesheet_day_lock (
+  employee_id VARCHAR(120) NOT NULL,
+  work_date DATE NOT NULL,
+  PRIMARY KEY(employee_id, work_date)
+);
+
+CREATE TABLE IF NOT EXISTS timesheet_adjustment (
+  employee_id VARCHAR(120) NOT NULL,
+  work_date DATE NOT NULL,
+  exit_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  justification VARCHAR(300) NOT NULL,
+  actor VARCHAR(120) NOT NULL,
+  PRIMARY KEY(employee_id, work_date)
+);
+
+CREATE TABLE IF NOT EXISTS timesheet_publication (
+  period VARCHAR(7) PRIMARY KEY,
+  revision BIGINT NOT NULL,
+  status VARCHAR(12) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  next_attempt TIMESTAMP WITH TIME ZONE
+);
 
 CREATE TABLE IF NOT EXISTS hr_export_batch (
   period VARCHAR(7) PRIMARY KEY,

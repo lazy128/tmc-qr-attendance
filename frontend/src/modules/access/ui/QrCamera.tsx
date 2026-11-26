@@ -6,13 +6,16 @@ type Detector = { detect(source: HTMLVideoElement): Promise<{ rawValue: string }
 export function QrCamera({
   onDecode,
   onFailure,
+  ignoreCode,
 }: {
   onDecode: (code: string) => void;
   onFailure: (message: string) => void;
+  ignoreCode?: (code: string) => boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const decode = useEffectEvent(onDecode);
   const fail = useEffectEvent(onFailure);
+  const ignored = useEffectEvent((code: string) => ignoreCode?.(code) ?? false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -62,7 +65,7 @@ export function QrCamera({
           fail("Không đọc được hình từ camera. Hãy mở lại camera hoặc nhập token bằng tay.");
           return;
         }
-        if (code) {
+        if (code && !ignored(code)) {
           stop();
           decode(code);
           return;
@@ -102,7 +105,6 @@ export function QrCamera({
   return (
     <video
       ref={videoRef}
-      className="facility-camera"
       aria-label="Camera quét QR"
       playsInline
       muted

@@ -31,8 +31,8 @@ public final class JdbcAttemptStore
       INSERT INTO access_attempt(
         event_id, correlation_id, employee_id, site_id, station_id, direction, scanned_at, received_at,
         credential_id, credential_version, jti, decision, reason_code, command_state, passage_state,
-        offline_accepted, evidence, suspicious
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        offline_accepted, evidence, suspicious, attendance_gate
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       """;
 
   private final JdbcTemplate jdbc;
@@ -68,18 +68,19 @@ public final class JdbcAttemptStore
         } catch (DuplicateKeyException duplicate) {
           throw new ReplayDetectedException();
         }
-        boolean pendingCommand = Boolean.TRUE.equals(jdbc.queryForObject("""
+        boolean pendingCommand = attempt.attendanceGate() && Boolean.TRUE.equals(jdbc.queryForObject("""
             SELECT EXISTS (SELECT 1 FROM access_attempt
-              WHERE site_id=? AND employee_id=? AND command_state IN ('SENT','UNKNOWN'))
+              WHERE site_id=? AND employee_id=? AND attendance_gate=TRUE AND command_state IN ('SENT','UNKNOWN'))
             """, Boolean.class, attempt.siteId().value(), attempt.employeeId()));
-        if (pendingCommand || !presence.allowed(attempt.siteId().value(), attempt.employeeId(), attempt.direction())) {
+        if (attempt.attendanceGate() && (pendingCommand
+            || !presence.allowed(attempt.siteId().value(), attempt.employeeId(), attempt.direction()))) {
           throw new AntiPassbackException();
         }
         insertAttempt(attempt, jti);
         jdbc.update(
-            "INSERT INTO edge_outbox(event_id, payload, status) VALUES(?,?, 'PENDING')",
+            "INSERT INTO edge_outbox(event_id, payload, status, attendance_status) VALUES(?,?, 'PENDING',?)",
             attempt.eventId().value(),
-            outboxCodec.encode(attempt)
+            outboxCodec.encode(attempt), attempt.attendanceGate() ? "PENDING" : "SKIPPED"
         );
         appendAuditRow("station", "ACCESS_ALLOW", attempt.eventId().value(), "ALLOW", attempt.correlationId(), attempt.receivedAt());
       });
@@ -92,6 +93,10 @@ public final class JdbcAttemptStore
   public void persistDenied(AccessAttempt attempt) {
     tx.executeWithoutResult(status -> {
       insertAttempt(attempt, null);
+      if (attempt.duplicateScan()) {
+        jdbc.update("INSERT INTO edge_outbox(event_id,payload,status) VALUES(?,?,'PENDING')",
+            attempt.eventId().value(), outboxCodec.encode(attempt));
+      }
       appendAuditRow(
           "station",
           "ACCESS_DENY",
@@ -116,7 +121,9 @@ public final class JdbcAttemptStore
       var current = lockAttempt(attempt.eventId().value());
       if (attempt.passage() == Passage.CONFIRMED && current.passage() != Passage.CONFIRMED) {
         writeOutcome(current.withPassage());
-        presence.confirmed(current.siteId().value(), current.employeeId(), current.direction(), current.eventId().value());
+        if (current.attendanceGate()) {
+          presence.confirmed(current.siteId().value(), current.employeeId(), current.direction(), current.eventId().value());
+        }
       }
     });
   }
@@ -128,7 +135,7 @@ public final class JdbcAttemptStore
       if (current.command() == attempt.command()
           || current.command() == Command.ACKED || current.command() == Command.FAILED) return;
       var next = current.withCommand(attempt.command());
-      if (next.command() == Command.ACKED) {
+      if (next.command() == Command.ACKED && next.attendanceGate()) {
         presence.acknowledged(next.siteId().value(), next.employeeId(), next.direction(), next.eventId().value());
         if (next.passage() == Passage.CONFIRMED) {
           presence.confirmed(next.siteId().value(), next.employeeId(), next.direction(), next.eventId().value());
@@ -162,7 +169,8 @@ public final class JdbcAttemptStore
       throw new IllegalStateException("attempt not found");
     }
     jdbc.update(
-        "UPDATE edge_outbox SET payload=?, central_status='PENDING', attendance_status='PENDING' WHERE event_id=?",
+        "UPDATE edge_outbox SET payload=?, central_status='PENDING', attendance_status="
+            + "CASE WHEN attendance_status='SKIPPED' THEN 'SKIPPED' ELSE 'PENDING' END WHERE event_id=?",
         outboxCodec.encode(attempt), attempt.eventId().value()
     );
   }
@@ -220,7 +228,8 @@ public final class JdbcAttemptStore
   public List<AccessAttempt> pendingAttendance(int limit) {
     return jdbc.query(
             "SELECT o.event_id FROM edge_outbox o JOIN access_attempt a ON a.event_id=o.event_id "
-                + "WHERE o.attendance_status='PENDING' AND a.command_state='ACKED' "
+                + "WHERE o.attendance_status='PENDING' AND a.attendance_gate=TRUE "
+                + "AND (a.command_state='ACKED' OR a.reason_code IN ('REPLAY','ANTI_PASSBACK')) "
                 + "ORDER BY o.created_at LIMIT ?",
             (rs, row) -> rs.getString(1),
             limit
@@ -366,7 +375,7 @@ public final class JdbcAttemptStore
         attempt.passage().name(),
         attempt.offlineAccepted(),
         attempt.evidence() == null ? null : attempt.evidence().name(),
-        attempt.suspicious()
+        attempt.suspicious(), attempt.attendanceGate()
     );
   }
 

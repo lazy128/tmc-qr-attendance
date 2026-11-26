@@ -5,16 +5,18 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import tmc.access.domain.AccessRequest;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.port.SnapshotProvider;
+import tmc.shared.StaffDirectory.Employee;
 
 /** Reads a local file supplied by the deployment's trusted snapshot publisher. */
 public final class FileSnapshotProvider implements SnapshotProvider {
   private final Path path;
   private final ObjectMapper json;
-  private volatile Snapshot current = new Snapshot(Instant.EPOCH, Set.of(), Map.of());
+  private volatile Snapshot current = new Snapshot(Instant.EPOCH, Set.of(), Map.of(), Map.of());
 
   public FileSnapshotProvider(Path path, ObjectMapper json) {
     this.path = path;
@@ -32,11 +34,19 @@ public final class FileSnapshotProvider implements SnapshotProvider {
 
   @Override public Instant snapshotTime() { return current.generatedAt(); }
   @Override public boolean revoked(String credentialId) { return current.revoked().contains(credentialId); }
+  @Override public Optional<Employee> employeeForCredential(String credentialId) {
+    return Optional.ofNullable(current.employees().get(credentialId));
+  }
 
   @Override
   public boolean policyAllows(Claims claims, AccessRequest request) {
     return request.siteId().value().equals(current.stationSites().get(request.stationId().value()));
   }
 
-  public record Snapshot(Instant generatedAt, Set<String> revoked, Map<String, String> stationSites) {}
+  public record Snapshot(Instant generatedAt, Set<String> revoked, Map<String, String> stationSites,
+      Map<String, Employee> employees) {
+    public Snapshot {
+      employees = employees == null ? Map.of() : Map.copyOf(employees);
+    }
+  }
 }

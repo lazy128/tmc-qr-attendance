@@ -52,7 +52,7 @@ public final class CentralSyncReceiver {
             attempt.passage(),
             attempt.offlineAccepted(),
             attempt.evidence(),
-            true
+            true, attempt.attendanceGate()
         )
         : attempt;
     events.put(attempt.eventId().value(), stored);

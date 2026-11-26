@@ -12,4 +12,5 @@ public final class AccessContext {
   public boolean gateInvoked;
   public boolean persisted;
   public String employeeId;
+  public boolean attendanceGate = true;
 }

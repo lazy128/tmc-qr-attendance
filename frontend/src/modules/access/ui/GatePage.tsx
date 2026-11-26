@@ -1,56 +1,111 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, Check, ImageUp, ScanLine, X } from "lucide-react";
 import { configuredEdges } from "../../shared/config/edges";
 import { errorMessage } from "../../shared/lib/error-message";
 import { DemoPage } from "../../shared/ui/DemoPage";
+import { displayTime, groupLabel, workflow, type Station } from "../../shared/workflow";
 import { accessApi } from "../api/access-api";
 import { scanEventId } from "../lib/scan-event-id";
 import { parseScanToken } from "../lib/scan-token";
-import type { VerifyPayload, VerifyResult } from "../model/types";
+import { readQrFile } from "../lib/read-qr";
+import type { VerifyResult } from "../model/types";
 import { QrCamera } from "./QrCamera";
 
-type Scan = { time: string; station: string; result: VerifyResult };
+type Gate = Station & { base: string; key: string };
+type Scan = { result: VerifyResult; gate: Gate; at: string };
+const reasons: Record<string, string> = {
+  TOKEN_EXPIRED: "Mã QR đã hết hạn",
+  REPLAY: "Mã QR đã được dùng",
+  REVOKED: "Thẻ đã bị thu hồi",
+  CVER_MISMATCH: "Mã cũ. Hãy mở mã QR mới",
+  DEVICE_MISMATCH: "Thiết bị không khớp",
+  ANTI_PASSBACK: "Trạng thái vào/ra không hợp lệ",
+  ZONE_DENIED: "Bạn không có quyền vào khu vực này",
+  OUTSIDE_SHIFT: "Ngoài khung giờ được vào",
+  EMPLOYEE_INACTIVE: "Tài khoản chưa hoạt động",
+  STATION_SCOPE: "Bạn không thuộc nhà máy này",
+  STATION_AUTH_FAILED: "Cổng chưa sẵn sàng",
+  INVALID_TOKEN: "Mã QR không hợp lệ",
+};
+
+function scanLabel({ result, gate }: Scan) {
+  const entry = gate.gate.directions[0] !== "EXIT";
+  if (result.decision !== "ALLOW") {
+    if (result.reasonCode === "ANTI_PASSBACK")
+      return entry ? "Bạn đã vào và chưa quét ra" : "Chưa có lượt vào phù hợp";
+    return reasons[result.reasonCode ?? ""] ?? "Chưa thể xác nhận. Vui lòng gặp bảo vệ.";
+  }
+  if (result.command !== "ACKED") return "Chưa mở được cổng. Vui lòng gặp bảo vệ.";
+  const name = result.employeeName ? `Xin chào ${result.employeeName}` : "Đã xác minh";
+  if (result.attendanceGate === false) return `${name}, được phép vào khu vực`;
+  return entry
+    ? `${name}, đã ghi nhận giờ vào ${displayTime(result.scannedAt ?? null)}`
+    : `Đã ghi nhận giờ ra ${displayTime(result.scannedAt ?? null)}`;
+}
 
 export function GatePage() {
-  const edges = configuredEdges();
-  const [selection, setSelection] = useState(0);
-  const [direction, setDirection] = useState<VerifyPayload["direction"]>("ENTRY");
+  const [gates, setGates] = useState<Gate[]>([]);
+  const [selection, setSelection] = useState("");
   const [camera, setCamera] = useState(false);
-  const [manual, setManual] = useState(false);
   const [raw, setRaw] = useState("");
-  const [override, setOverride] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<VerifyResult | null>(null);
+  const [result, setResult] = useState<Scan | null>(null);
   const [history, setHistory] = useState<Scan[]>([]);
-  const edge = edges[selection] ?? edges[0];
+  const lastCameraCode = useRef("");
+  const gate = gates.find((item) => item.key === selection) ?? gates[0];
+  useEffect(() => {
+    const controller = new AbortController();
+    const urls = Array.from(new Set(configuredEdges().map((edge) => edge.url)));
+    void Promise.allSettled(
+      urls.map(async (base) =>
+        (await workflow.gates(base, controller.signal)).map((item) => ({
+          ...item,
+          base,
+          key: `${base}/${item.stationId}`,
+        })),
+      ),
+    ).then((responses) => {
+      if (controller.signal.aborted) return;
+      const items = responses.flatMap((response) =>
+        response.status === "fulfilled" ? response.value : [],
+      );
+      setGates(items);
+      if (!items.length) setError("Không tải được danh sách cổng.");
+    });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    if (!result) return;
+    const timer = window.setTimeout(() => setResult(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [result]);
 
-  async function scan(value: string, deviceOverride?: string) {
-    setCamera(false);
+  async function scan(read: () => string | undefined | Promise<string | undefined>) {
+    if (!gate || busy) return;
     setBusy(true);
     setError("");
     setResult(null);
     try {
-      const { token, deviceId } = parseScanToken(value);
+      const code = await read();
+      if (!code) throw new Error("Không tìm thấy mã QR trong ảnh.");
+      const { token, deviceId } = parseScanToken(code);
       const scannedAt = new Date().toISOString();
-      const verification = await accessApi.verify(
+      const verdict = await accessApi.verify(
         {
           eventId: scanEventId(),
-          siteId: edge.site,
-          direction,
+          siteId: gate.siteId,
+          direction: gate.gate.directions[0] ?? "ENTRY",
           scannedAt,
           token,
-          deviceId: deviceOverride?.trim() || deviceId,
+          deviceId,
         },
-        edge.station,
-        edge.url,
+        gate.stationId,
+        gate.base,
       );
-      setResult(verification);
-      setHistory((previous) =>
-        [{ time: scannedAt, station: edge.station, result: verification }, ...previous].slice(
-          0,
-          10,
-        ),
-      );
+      const entry = { gate, result: verdict, at: scannedAt };
+      setResult(entry);
+      setHistory((previous) => [entry, ...previous].slice(0, 5));
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -58,135 +113,168 @@ export function GatePage() {
     }
   }
 
+  const zone = gate?.gate.type === "ZONE_GATE";
+  const good = result?.result.decision === "ALLOW" && result.result.command === "ACKED";
+  const latest = history.find((scan) => scan.gate.key === gate?.key)?.result;
   return (
     <DemoPage title="Kiosk cổng">
-      <div className="grid gap-4">
-        <section className="facility-card grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="demo-field">
-              Site / trạm
-              <select
-                value={selection}
-                disabled={busy}
-                onChange={(event) => {
-                  setCamera(false);
-                  setResult(null);
-                  setError("");
-                  setSelection(Number(event.target.value));
-                }}
-              >
-                {edges.map((item, index) => (
-                  <option key={index} value={index}>
-                    {item.site} / {item.station}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="demo-field">
-              Chiều
-              <select
-                value={direction}
-                disabled={busy || camera}
-                onChange={(event) => setDirection(event.target.value as VerifyPayload["direction"])}
-              >
-                <option value="ENTRY">Vào</option>
-                <option value="EXIT">Ra</option>
-              </select>
-            </label>
-          </div>
-          <div className="facility-actions">
-            <button
-              className="facility-button facility-button--primary"
-              disabled={busy}
-              onClick={() => {
+      <div className="workflow-gate-grid">
+        <section className="workflow-card workflow-gate">
+          <label className="workflow-field">
+            Chọn cổng
+            <select
+              disabled={!gate || busy}
+              value={gate?.key ?? ""}
+              onChange={(event) => {
+                setSelection(event.target.value);
+                lastCameraCode.current = "";
+                setResult(null);
                 setError("");
-                setCamera(!camera);
               }}
             >
+              {!gate && <option value="">Đang tải cổng…</option>}
+              {gates.map((item) => (
+                <option value={item.key} key={item.key}>
+                  {item.gate.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="workflow-gate-heading">
+            <strong>
+              {zone ? "CỔNG KHU VỰC" : gate?.gate.directions[0] === "EXIT" ? "CỔNG RA" : "CỔNG VÀO"}
+            </strong>
+            {gate && (
+              <p>
+                {zone
+                  ? "Quyền vào · " +
+                    gate.gate.allowedGroups.map((group) => groupLabel[group]).join(", ")
+                  : "Ghi nhận giờ chấm công"}
+              </p>
+            )}
+          </div>
+          <div
+            className={`workflow-scan ${result ? (good ? "accepted" : "rejected") : ""}`}
+            role="status"
+          >
+            {result ? (
+              <>
+                {good ? <Check size={46} /> : <X size={46} />}
+                <strong>{scanLabel(result)}</strong>
+              </>
+            ) : camera && !busy ? (
+              <QrCamera
+                ignoreCode={(code) => code === lastCameraCode.current}
+                onDecode={(code) => {
+                  lastCameraCode.current = code;
+                  void scan(() => code);
+                }}
+                onFailure={(message) => {
+                  setCamera(false);
+                  setError(message);
+                }}
+              />
+            ) : (
+              <>
+                <ScanLine size={45} />
+                <strong>{busy ? "Đang xác minh…" : "Sẵn sàng quét QR"}</strong>
+                {!busy && <p>Mở camera hoặc chọn ảnh QR của nhân viên.</p>}
+              </>
+            )}
+          </div>
+          <div className="workflow-actions">
+            <button
+              className="workflow-button"
+              disabled={!gate || busy}
+              onClick={() => {
+                lastCameraCode.current = "";
+                setCamera(!camera);
+                setError("");
+              }}
+            >
+              <Camera size={18} />
               {camera ? "Tắt camera" : "Mở camera"}
             </button>
-            <button
-              className="facility-button"
-              aria-expanded={manual}
-              onClick={() => {
-                setCamera(false);
-                setManual(!manual);
-              }}
-            >
-              Nhập tay token
-            </button>
+            <label className="workflow-button secondary relative">
+              <ImageUp size={18} /> Chọn ảnh QR
+              <input
+                className="absolute inset-0 w-full cursor-pointer opacity-0"
+                type="file"
+                accept="image/*"
+                aria-label="Chọn ảnh QR"
+                disabled={!gate || busy}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void scan(() => readQrFile(file));
+                }}
+              />
+            </label>
           </div>
-          {camera && (
-            <QrCamera
-              onDecode={(code) => void scan(code)}
-              onFailure={(message) => {
-                setCamera(false);
-                setError(message);
-              }}
-            />
-          )}
-          {manual && (
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void scan(raw, override);
-              }}
-            >
-              <label className="demo-field">
-                Token QR{" "}
-                <textarea value={raw} onChange={(event) => setRaw(event.target.value)} required />
-              </label>
-              <label className="demo-field">
-                Device ID để thử sai thiết bị
-                <input
-                  value={override}
-                  maxLength={256}
-                  onChange={(event) => setOverride(event.target.value)}
-                />
-              </label>
-              <button className="facility-button self-start" disabled={busy}>
-                Xác minh
-              </button>
-            </form>
-          )}
-          {busy && <p role="status">Đang xác minh…</p>}
           {error && (
-            <p className="facility-error" role="alert">
+            <p role="alert" className="workflow-error">
               {error}
             </p>
           )}
+          <details className="workflow-technical">
+            <summary>Chi tiết kỹ thuật</summary>
+            {gate && (
+              <p>
+                {gate.siteId} / {gate.stationId}
+              </p>
+            )}
+            {latest && (
+              <>
+                <p>
+                  {latest.decision} · {latest.reasonCode ?? latest.command} ·{" "}
+                  {latest.evidence ?? "—"}
+                </p>
+                <p>Event ID {latest.eventId}</p>
+                <ul>
+                  {latest.steps?.map((step, index) => (
+                    <li key={`${step}-${index}`}>{step}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <details className="workflow-technical">
+              <summary>Nhập token thủ công (chỉ để test)</summary>
+              <form
+                className="grid gap-3 pt-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void scan(() => raw);
+                }}
+              >
+                <label className="workflow-field">
+                  Token QR
+                  <textarea value={raw} onChange={(event) => setRaw(event.target.value)} required />
+                </label>
+                <button className="workflow-button secondary" disabled={!gate || busy}>
+                  Xác minh
+                </button>
+              </form>
+            </details>
+          </details>
         </section>
-        {result && (
-          <section className="facility-card text-center" role="status">
-            <strong
-              className={`text-5xl ${result.decision === "ALLOW" ? "text-green-800" : "text-red-800"}`}
-            >
-              {result.decision}
-            </strong>
-            {result.reasonCode && <p className="mt-2 font-bold">{result.reasonCode}</p>}
-            <p className="mt-2">{result.kioskMessage}</p>
-          </section>
-        )}
-        <section className="facility-card">
-          <h2>Lịch sử quét</h2>
+        <aside className="workflow-card workflow-history">
+          <h2>5 lượt quét gần nhất</h2>
           {history.length ? (
-            <ol className="mt-3 grid gap-2">
+            <ol>
               {history.map((item) => (
-                <li key={item.result.eventId} className="flex flex-wrap gap-x-3 border-b py-2">
-                  <time dateTime={item.time}>
-                    {new Date(item.time).toLocaleTimeString("vi-VN")}
-                  </time>
-                  <span>{item.station}</span>
-                  <strong>{item.result.decision}</strong>
-                  <span>{item.result.reasonCode}</span>
+                <li key={item.result.eventId}>
+                  <time dateTime={item.at}>{displayTime(item.at)}</time>
+                  <div>
+                    <strong>{scanLabel(item)}</strong>
+                    <p>{item.gate.gate.name}</p>
+                  </div>
                 </li>
               ))}
             </ol>
           ) : (
-            <p className="facility-muted mt-2">Chưa có lượt quét.</p>
+            <p>Chưa có lượt quét.</p>
           )}
-        </section>
+        </aside>
       </div>
     </DemoPage>
   );

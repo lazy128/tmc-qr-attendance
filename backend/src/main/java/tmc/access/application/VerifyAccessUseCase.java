@@ -75,7 +75,7 @@ public final class VerifyAccessUseCase {
       return new AccessResult(context.attempt, List.copyOf(trace), false);
     }
     if (context.attempt == null) {
-      context.attempt = denied(request, failure == null ? Reason.POLICY_DENIED : failure);
+      context.attempt = denied(request, failure == null ? Reason.POLICY_DENIED : failure, context);
       try {
         if (context.idempotencyReserved) attempts.persistDenied(context.attempt);
         else attempts.auditRejection(context.attempt);
@@ -118,10 +118,14 @@ public final class VerifyAccessUseCase {
   }
 
   private AccessAttempt denied(AccessRequest request, Reason reason) {
+    return denied(request, reason, new AccessContext());
+  }
+
+  private AccessAttempt denied(AccessRequest request, Reason reason, AccessContext context) {
     return new AccessAttempt(
         request.eventId(),
         request.correlationId(),
-        null,
+        reason == Reason.REPLAY || reason == Reason.ANTI_PASSBACK ? context.employeeId : null,
         request.siteId(),
         request.stationId(),
         request.direction(),
@@ -136,7 +140,8 @@ public final class VerifyAccessUseCase {
         Passage.NOT_AVAILABLE,
         false,
         null,
-        false
+        false,
+        context.attendanceGate
     );
   }
 }

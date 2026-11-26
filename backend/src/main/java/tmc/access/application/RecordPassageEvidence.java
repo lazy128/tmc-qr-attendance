@@ -23,6 +23,8 @@ public final class RecordPassageEvidence {
     }
     var confirmed = attempt.withPassage();
     attempts.update(confirmed);
-    presence.confirmed(attempt.siteId().value(), attempt.employeeId(), attempt.direction(), eventId);
+    if (attempt.attendanceGate()) {
+      presence.confirmed(attempt.siteId().value(), attempt.employeeId(), attempt.direction(), eventId);
+    }
   }
 }

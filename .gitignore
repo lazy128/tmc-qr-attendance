@@ -10,3 +10,5 @@
 *.mv.db
 *.trace.db
 /verification-logs/
+/backend/exports/
+/frontend/test-results/

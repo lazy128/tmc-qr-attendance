@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
@@ -42,6 +44,7 @@ import tmc.shared.web.CorrelationIdFilter;
 import tmc.userqr.application.IssueQrToken;
 
 class EdgeFlowTest {
+  @TempDir static Path timesheetExports;
   private static final ZoneId HR_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
   private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   private static ServletWebServerApplicationContext app;
@@ -53,6 +56,7 @@ class EdgeFlowTest {
   static void start() throws Exception {
     app = (ServletWebServerApplicationContext) new SpringApplicationBuilder(EdgeApplication.class).run(
         "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_flow_test",
+        "--tmc.timesheet.export-dir=" + timesheetExports,
         "--tmc.hr.schedule=-", "--TMC_HR_DEMO_TOKEN=hr-test-token", "--TMC_GUARD_DEMO_TOKEN=guard-test-token",
         "--TMC_EMPLOYEE_DEMO_TOKEN=employee-test-token", "--TMC_ADMIN_DEMO_TOKEN=admin-test-token",
         "--TMC_EMPLOYEE_2_DEMO_TOKEN=employee-2-test-token",

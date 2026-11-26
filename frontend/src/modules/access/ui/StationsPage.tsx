@@ -75,7 +75,7 @@ export function StationsPage() {
   return (
     <DemoPage title="Quản lý trạm">
       <div className="grid gap-4">
-        <section className="facility-card grid gap-4">
+        <section className="workflow-card grid gap-4">
           <form
             className="grid gap-4"
             onSubmit={(event) => {
@@ -88,7 +88,7 @@ export function StationsPage() {
             }}
           >
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="demo-field">
+              <label className="workflow-field">
                 Edge / site
                 <select
                   value={selection}
@@ -107,7 +107,7 @@ export function StationsPage() {
                   ))}
                 </select>
               </label>
-              <label className="demo-field">
+              <label className="workflow-field">
                 Mã đăng nhập Admin hoặc bảo vệ
                 <input
                   type="password"
@@ -123,21 +123,18 @@ export function StationsPage() {
                 />
               </label>
             </div>
-            <button
-              className="facility-button facility-button--primary justify-self-start"
-              disabled={busy}
-            >
+            <button className="workflow-button justify-self-start" disabled={busy}>
               Tải danh sách
             </button>
           </form>
           {error && (
-            <p className="facility-error" role="alert">
+            <p className="workflow-error" role="alert">
               {error}
             </p>
           )}
           {registry && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
+            <div className="workflow-table-wrap">
+              <table className="workflow-table">
                 <thead>
                   <tr>
                     <th scope="col">Site</th>
@@ -150,7 +147,7 @@ export function StationsPage() {
                 </thead>
                 <tbody>
                   {registry.stations.map((station) => (
-                    <tr key={station.stationId} className="border-t [&>td]:p-2">
+                    <tr key={station.stationId}>
                       <td>{station.siteId}</td>
                       <td>{station.stationId}</td>
                       <td>{station.gateId}</td>
@@ -163,7 +160,7 @@ export function StationsPage() {
                       {registry.canManage && (
                         <td>
                           <button
-                            className="facility-button"
+                            className="workflow-button secondary"
                             disabled={busy}
                             onClick={() => setEdit(station)}
                           >
@@ -179,19 +176,19 @@ export function StationsPage() {
           )}
         </section>
         {registry?.canManage && (
-          <form key={edit?.stationId ?? "new"} className="facility-card grid gap-4" onSubmit={save}>
+          <form key={edit?.stationId ?? "new"} className="workflow-card grid gap-4" onSubmit={save}>
             <h2>{edit ? `Sửa ${edit.stationId}` : "Đăng ký trạm"}</h2>
-            <p className="facility-muted">{edge.site}</p>
+            <p>{edge.site}</p>
             {!edit && (
-              <label className="demo-field">
+              <label className="workflow-field">
                 Trạm <input name="stationId" required maxLength={100} />
               </label>
             )}
-            <label className="demo-field">
+            <label className="workflow-field">
               Cổng <input name="gateId" defaultValue={edit?.gateId} required maxLength={100} />
             </label>
             {edit && (
-              <label className="demo-field">
+              <label className="workflow-field">
                 Trạng thái
                 <select name="status" defaultValue={edit.status}>
                   <option value="ACTIVE">ACTIVE</option>
@@ -199,14 +196,14 @@ export function StationsPage() {
                 </select>
               </label>
             )}
-            <div className="facility-actions">
-              <button className="facility-button facility-button--primary" disabled={busy}>
+            <div className="workflow-actions">
+              <button className="workflow-button" disabled={busy}>
                 {edit ? "Lưu thay đổi" : "Đăng ký"}
               </button>
               {edit && (
                 <button
                   type="button"
-                  className="facility-button"
+                  className="workflow-button secondary"
                   disabled={busy}
                   onClick={() => setEdit(null)}
                 >

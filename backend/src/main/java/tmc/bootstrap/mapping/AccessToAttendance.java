@@ -16,7 +16,7 @@ public final class AccessToAttendance {
         attempt.scannedAt(),
         attempt.command().name(),
         attempt.passage().name(),
-        attempt.evidence() == null ? null : attempt.evidence().name(),
+        attempt.duplicateScan() ? "DUPLICATE_SCAN" : attempt.evidence() == null ? null : attempt.evidence().name(),
         attempt.suspicious()
     );
   }

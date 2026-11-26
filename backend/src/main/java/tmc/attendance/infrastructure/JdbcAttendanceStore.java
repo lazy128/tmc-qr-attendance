@@ -3,6 +3,7 @@ package tmc.attendance.infrastructure;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
@@ -39,6 +40,9 @@ public final class JdbcAttendanceStore implements AttendanceRecordStore {
           record.suspicious()
       ) == 1;
     } catch (DuplicateKeyException duplicate) {
+      if (record.suspicious()) {
+        jdbc.update("UPDATE attendance_record SET suspicious=TRUE WHERE event_id=?", record.eventId());
+      }
       if ("CONFIRMED".equals(record.passage())) {
         jdbc.update("""
             UPDATE attendance_record SET passage_state=?, evidence=?, hr_review=?
@@ -61,6 +65,13 @@ public final class JdbcAttendanceStore implements AttendanceRecordStore {
   @Override
   public List<AttendanceRecord> all() {
     return jdbc.query("SELECT * FROM attendance_record ORDER BY scanned_at DESC", (rs, row) -> map(rs));
+  }
+
+  public List<AttendanceRecord> forEmployeeBetween(String employeeId, Instant start, Instant end) {
+    return jdbc.query("""
+        SELECT * FROM attendance_record WHERE employee_id=? AND scanned_at>=? AND scanned_at<?
+        ORDER BY scanned_at,event_id
+        """, (rs, row) -> map(rs), employeeId, Timestamp.from(start), Timestamp.from(end));
   }
 
   private AttendanceRecord map(ResultSet rs) throws SQLException {

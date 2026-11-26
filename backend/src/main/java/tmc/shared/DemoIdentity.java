@@ -10,9 +10,17 @@ import java.util.Set;
 /** Resolves configured demo bearer tokens to server-side identities. */
 public final class DemoIdentity {
   private final Map<String, String> tokens;
+  private final Map<String, String> workflowTokens;
 
   public DemoIdentity(Map<String, String> tokens) {
-    this.tokens = Map.copyOf(tokens);
+    this(tokens, Map.of());
+  }
+
+  public DemoIdentity(Map<String, String> configured, Map<String, String> workflowTokens) {
+    this.workflowTokens = Map.copyOf(workflowTokens);
+    var combined = new java.util.HashMap<>(configured);
+    combined.putAll(workflowTokens);
+    this.tokens = Map.copyOf(combined);
     Set<String> unique = new HashSet<>();
     for (String token : tokens.values()) {
       if (!token.isEmpty() && !unique.add(token)) {
@@ -20,6 +28,8 @@ public final class DemoIdentity {
       }
     }
   }
+
+  public Optional<String> workflowToken(String actor) { return Optional.ofNullable(workflowTokens.get(actor)); }
 
   public Optional<String> authenticate(String header) {
     if (header == null || !header.startsWith("Bearer ")) return Optional.empty();

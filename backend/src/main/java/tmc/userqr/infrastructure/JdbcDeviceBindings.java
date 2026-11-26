@@ -42,6 +42,11 @@ public class JdbcDeviceBindings {
     }, credentialId);
   }
 
+  public Optional<String> registeredDeviceHash(String credentialId) {
+    return jdbc.query("SELECT device_hash FROM device_binding WHERE credential_id=?",
+        row -> row.next() ? Optional.of(row.getString(1)) : Optional.empty(), credentialId);
+  }
+
   private static String hash(String proof) {
     try {
       return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(proof.getBytes(StandardCharsets.UTF_8)));

@@ -21,6 +21,7 @@ import tmc.access.domain.EventId;
 import tmc.access.domain.SiteId;
 import tmc.access.domain.StationId;
 import tmc.shared.web.CorrelationIdFilter;
+import tmc.shared.StaffDirectory;
 
 @RestController
 public class AccessController {
@@ -97,7 +98,11 @@ public class AccessController {
         attempt.evidence() == null ? null : attempt.evidence().name(),
         kiosk,
         correlationId,
-        result.steps()
+        result.steps(),
+        attempt.decision() == Decision.ALLOW && attempt.command() == Command.ACKED
+            ? StaffDirectory.name(attempt.employeeId()) : null,
+        attempt.scannedAt(),
+        attempt.attendanceGate()
     ));
   }
 
@@ -133,6 +138,9 @@ public class AccessController {
       String evidence,
       String kioskMessage,
       String correlationId,
-      List<String> steps
+      List<String> steps,
+      String employeeName,
+      Instant scannedAt,
+      boolean attendanceGate
   ) {}
 }

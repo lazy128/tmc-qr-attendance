@@ -17,15 +17,18 @@ public class CentralOutboxWorker {
   private final CentralOutbox outbox;
   private final RestTemplate http;
   private final String centralUrl;
+  private final String syncToken;
 
   public CentralOutboxWorker(
       CentralOutbox outbox,
       RestTemplate http,
-      @Value("${tmc.central.url}") String centralUrl
+      @Value("${tmc.central.url}") String centralUrl,
+      @Value("${TMC_EDGE_SYNC_TOKEN:}") String syncToken
   ) {
     this.outbox = outbox;
     this.http = http;
     this.centralUrl = centralUrl.replaceAll("/$", "");
+    this.syncToken = syncToken;
   }
 
   @Scheduled(fixedDelay = 1000)
@@ -34,6 +37,7 @@ public class CentralOutboxWorker {
       try {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (!syncToken.isBlank()) headers.setBearerAuth(syncToken);
         HttpEntity<String> request = new HttpEntity<>("[" + payload + "]", headers);
         http.postForEntity(centralUrl + "/edge/v1/sync", request, String.class);
         outbox.centralDone(payload);

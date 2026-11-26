@@ -17,4 +17,7 @@ export type VerifyResult = {
   kioskMessage: string;
   correlationId: string;
   steps: string[];
+  employeeName?: string | null;
+  scannedAt?: string;
+  attendanceGate?: boolean;
 };

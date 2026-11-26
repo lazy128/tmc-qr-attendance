@@ -8,42 +8,62 @@
 
 ## Chạy demo
 
-Cần **Java 21** và **Node.js 24**. Maven Wrapper tự tải Maven trong lần chạy đầu. Mở hai terminal từ thư mục gốc.
+### Demo nghiệp vụ nhân viên, cổng và HR
 
-**Terminal 1 · Backend**
+Cần **Java 21** và **Node.js 24**.
+
+Chạy profile `workflow` với H2 riêng tại `backend/data/tmc-workflow`. Profile tạo sáu nhân viên hư cấu ở Bình Dương và Long An, thiết bị đã đăng ký và dữ liệu mẫu có ca đủ giờ, ca qua đêm, thiếu giờ ra và lượt trùng. Chỉ bật profile trên dữ liệu demo vì giao diện cho chọn tài khoản và vai trò mẫu.
 
 ```powershell
+# Terminal backend
 cd backend
-$env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
-$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
-$env:TMC_ADMIN_DEMO_TOKEN = 'tmc-local-admin'
-$env:TMC_GUARD_DEMO_TOKEN = 'tmc-local-guard'
-.\mvnw.cmd spring-boot:run
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=workflow"
 ```
-
-Trên macOS/Linux, đặt các biến bằng `export KEY=value` và chạy `./mvnw spring-boot:run`. Các giá trị trên dùng với dữ liệu mẫu trên máy cục bộ. [Cấu hình backend và Docker](backend/README.md)
-
-**Terminal 2 · Frontend**
 
 ```powershell
+# Terminal frontend
 cd frontend
-Copy-Item .env.example .env
 npm ci
-npm run dev
+$env:VITE_EDGE_API_URL = 'http://127.0.0.1:8084'
+npm run dev -- --strictPort
 ```
 
-1. Mở `http://localhost:5173`, chọn **Nhân viên & QR** và giữ `demo-credential`. Nhập mã HR vào phần đăng ký, bấm **Đăng ký thiết bị** và sao chép mã do Edge cấp. Mỗi lần đăng ký mới thay thế mã đăng ký trước đó.
-2. Mở `http://localhost:5173/employee`, nhập `demo-credential`, mã đăng nhập nhân viên và mã đăng ký. Bấm **Hiển thị QR**. QR dùng tiền tố `tmc1:`, hết hạn sau khoảng 30 giây và được làm mới khi còn khoảng 8 giây.
-3. Mở `http://localhost:5173/gate`, chọn `SITE-1 / GATE-1`, chọn chiều và mở camera laptop. Mỗi lần mở camera đọc một mã. Nếu chưa có camera, bấm **Nhập tay token**. Console cũ vẫn hỗ trợ tải ảnh QR và **Quét mã vừa cấp**.
-4. Mở `http://localhost:5173/stations` để xem registry. Admin quản lý trạm của Edge đang chọn. Bảo vệ xem trạm được giao. Trạm `DISABLED` bị từ chối xác minh. Để kiosk chọn được trạm mới, thêm cặp site/trạm và URL Edge vào `VITE_EDGES`.
-5. Ở **Chấm công & HR**, nhập mã HR, tải bản ghi sau khi worker xử lý outbox và chọn tháng để tải CSV.
+- `/employee` hiển thị QR ngay với tài khoản đầu tiên. Đổi nhân viên trong danh sách và đưa mã vào camera kiosk.
+- `/gate` lấy tên, hướng và nhóm được vào từ registry. Dùng **Mở camera** hoặc **Chọn ảnh QR**. Nhập token thủ công nằm trong **Chi tiết kỹ thuật**. Cổng vào và cổng ra ghi nhận theo hướng cấu hình.
+- `/attendance` cho nhân viên xem dữ liệu của mình, quản lý xem nhóm sản xuất Bình Dương và HR xem toàn bộ hồ sơ mẫu. HR bổ sung giờ ra đã qua kèm lý do, tải CSV tháng hoặc XLSX. CSV bàn giao giờ công cho bộ phận Payroll.
+- `/stations` dành cho Admin quản lý trạm và bảo vệ xem trạm được giao. Trạm `DISABLED` bị từ chối xác minh.
+
+Để thử đồng thời hai nhà máy, đóng gói JAR rồi chạy `backend/scripts/start-multisite.ps1 -Workflow`. Trong terminal frontend đặt `VITE_EDGE_API_URL=http://127.0.0.1:8090` để cấp QR và xem bảng công hợp nhất trên Central, và đặt `VITE_EDGES` như sau để kiosk gọi đúng Edge. Hai Edge chia sẻ khóa ký demo. Outbox gửi sự kiện chấm công bằng bearer dành riêng cho đồng bộ. Có thể thêm `-IsolatedData` để dùng H2 trong bộ nhớ.
+
+```powershell
+$env:VITE_EDGES = '[{"site":"SITE-BD","station":"BD-G01","url":"http://127.0.0.1:8081"},{"site":"SITE-LA","station":"LA-G01","url":"http://127.0.0.1:8082"}]'
+```
+
+### Tổng hợp công và bảng tính
+
+Các lượt quét gốc trong DB là nguồn dữ liệu chính. Sau khi outbox ghi nhận lượt quét hợp lệ hoặc bất thường tại cổng chấm công, projection tính lại theo khóa nhân viên và ngày công. Phiên ghép theo thứ tự, cộng các cặp vào–ra hợp lệ và loại thời gian nghỉ giữa cặp. Mặc định ngày công bắt đầu lúc **06:00**, theo `Asia/Ho_Chi_Minh`. Lượt ra trước 06:00 thuộc ngày hôm trước, kể cả qua tháng. Đặt `tmc.timesheet.day-start` để đổi mốc. Mốc này là giả định chờ HR duyệt.
+
+XLSX là bản sao dẫn xuất. Worker ghi tệp `timesheet-YYYY-MM.xlsx` vào `backend/exports/workflow` trong profile đơn, gồm **Tổng hợp**, **Chi tiết ngày** và **Cần HR xem**. File được ghi tạm trước khi thay thế. Tần suất gộp mặc định 5 giây, thời gian chờ thử lại 30 giây và lịch chốt tháng trước mặc định 11:30 ngày 1. Các tham số lần lượt là `tmc.timesheet.publish-delay-ms`, `tmc.timesheet.retry-seconds` và `tmc.timesheet.close-cron`. API tải file kiểm tra quyền HR và ghi audit. File chỉ chứa dữ liệu công đã tổng hợp.
+
+Google Sheets là adapter khung, mặc định tắt. Các thuộc tính dự kiến là `tmc.timesheet.google.spreadsheet-id` và `tmc.timesheet.google.service-account`. Cần TMC và pháp chế phê duyệt trước khi phát triển và bật đường truyền dữ liệu ra dịch vụ bên thứ ba.
+
+### Quyền qua cổng và giả định
+
+| Khu vực | Nhóm được vào |
+| --- | --- |
+| Cổng chấm công vào/ra | Nhân viên, quản lý, lãnh đạo |
+| Khu sản xuất | Nhân viên, quản lý |
+| Văn phòng quản lý | Quản lý, lãnh đạo |
+| Khu lãnh đạo | Lãnh đạo |
+
+Cổng khu vực ghi AccessAttempt và audit. Quyền theo nhóm khai báo tường minh, đúng site, đúng hướng và đúng khung giờ đã cấu hình. `tmc.access.shift-grace-minutes` mặc định 10 phút. Admin cấu hình trường `gate` trên `POST/PATCH /admin/v1/stations` với `name`, `type`, `allowedGroups`, `directions` và cặp giờ tùy chọn `opensAt` / `closesAt`. Bật `tmc.access.enforce-employee-shift=true` để áp dụng thêm lịch ca ngày và ca đêm của nhân viên, với các mốc `tmc.access.shift.standard-open`, `standard-close`, `night-open`, `night-close`. Công tắc mặc định tắt cho demo. Snapshot ngoài file khai báo `employees` theo credential ID. Trong demo, dữ liệu mẫu và cơ sở dữ liệu local đóng vai trò snapshot tin cậy. Nhóm quyền và tên nhân viên nằm ở Edge. Ma trận trên cần TMC duyệt, và việc miễn chấm công cho lãnh đạo do HR quyết định.
 
 ### Điện thoại hiển thị QR qua LAN
 
-Ví dụ IP LAN của laptop là `192.168.1.25`. Dùng cùng Wi-Fi và thay IP trong các lệnh dưới đây bằng IP laptop. Dùng tài khoản và dữ liệu mẫu trên mạng tin cậy vì HTTP truyền mã demo dưới dạng rõ.
+Ví dụ IP LAN của laptop là `192.168.1.25`. Chạy backend profile `workflow` ở cổng 8084. Dùng cùng Wi-Fi và thay IP trong các lệnh dưới đây bằng IP laptop. Dùng dữ liệu mẫu trên mạng tin cậy vì HTTP truyền mã demo dưới dạng rõ.
 
 - Trong terminal backend, trước khi chạy, đặt `$env:SERVER_ADDRESS = '0.0.0.0'` và `$env:TMC_CORS_ORIGINS = 'http://localhost:5173,http://192.168.1.25:5173'`.
-- Trong terminal frontend, đặt `$env:VITE_EDGE_API_URL = 'http://192.168.1.25:8080'` và chạy `npm run dev -- --host 0.0.0.0 --strictPort`. Nếu firewall chặn, cho phép TCP 5173 và 8080 trên mạng riêng.
+- Trong terminal frontend, đặt `$env:VITE_EDGE_API_URL = 'http://192.168.1.25:8084'` và chạy `npm run dev -- --host 0.0.0.0 --strictPort`. Nếu firewall chặn, cho phép TCP 5173 và 8084 trên mạng riêng.
 - Trên điện thoại mở `http://192.168.1.25:5173/employee`. Trên laptop mở `http://localhost:5173/gate` để trình duyệt cấp quyền camera. Hai trang dùng cùng Edge.
 
 ### Điện thoại làm máy quét qua HTTPS
@@ -54,7 +74,7 @@ Với **mkcert**, giữ backend ở loopback và đặt `TMC_CORS_ORIGINS=https:
 mkcert -install
 mkcert -cert-file dev-cert.pem -key-file dev-key.pem localhost 127.0.0.1 192.168.1.25
 $env:VITE_EDGE_API_URL = '/edge-api'
-$env:TMC_DEV_PROXY_TARGET = 'http://127.0.0.1:8080'
+$env:TMC_DEV_PROXY_TARGET = 'http://127.0.0.1:8084'
 $env:TMC_DEV_HTTPS_CERT = (Resolve-Path dev-cert.pem).Path
 $env:TMC_DEV_HTTPS_KEY = (Resolve-Path dev-key.pem).Path
 npm run dev -- --host 0.0.0.0 --strictPort
@@ -80,30 +100,25 @@ cd backend
 | `la` | `localhost:8082` · `SITE-LA / LA-G01` | `data/tmc-edge-la` |
 | Central mô phỏng | `localhost:8090` | Bộ nhớ tiến trình |
 
-Trong frontend, đặt `VITE_EDGE_API_URL=http://localhost:8081` và bật dòng `VITE_EDGES` trong `frontend/.env.example` ở tệp `.env`. Khởi động lại Vite, đăng ký thiết bị trên BD và dùng menu site ở kiosk. Để kiểm tra tự động trên ba tiến trình đang chạy, đặt `TMC_EMPLOYEE_DEMO_TOKEN` và `TMC_DEVICE_PROOF` của BD trong terminal mới rồi chạy `node scripts/check-multisite.mjs` từ `backend/`. Script xác minh cùng token tại hai Edge và đợi Central ghi nhận `SUSPICIOUS` từ outbox. Có thể chạy `.\scripts\start-multisite.ps1 -Check` khi ba cổng đang trống để tự khởi động, kiểm tra bằng H2 trong bộ nhớ và dừng các tiến trình.
+Để kiểm thử replay trên ba tiến trình, chạy `.\scripts\start-multisite.ps1 -Check` từ `backend/` khi ba cổng đang trống. Script xác minh cùng token tại hai Edge và đợi Central ghi nhận `SUSPICIOUS`. Dùng `.\scripts\start-multisite.ps1 -Workflow -Check` để kiểm tra đồng bộ bảng công và phân quyền cổng của hai nhà máy.
 
 ### Kịch bản demo
 
-Để giữ nguyên một token cho các kịch bản nhập tay, cấp token qua API bằng mã đăng ký đã có. Ví dụ dưới đây dùng Edge đơn. Với BD, đổi cổng thành 8081.
+Để giữ nguyên một token cho các kịch bản nhập tay trong kiosk, lấy mã từ API của profile nghiệp vụ.
 
 ```powershell
-$edge = 'http://localhost:8080'
-$env:TMC_DEVICE_PROOF = '<mã đăng ký do HR cấp>'
-$headers = @{
-  Authorization = "Bearer $env:TMC_EMPLOYEE_DEMO_TOKEN"
-  'X-Device-Proof' = $env:TMC_DEVICE_PROOF
-}
-$issued = Invoke-RestMethod -Method Post -Uri "$edge/qr/v1/tokens" -Headers $headers -ContentType 'application/json' -Body '{"credentialId":"demo-credential"}'
+$edge = 'http://127.0.0.1:8084'
+$issued = Invoke-RestMethod -Method Post -Uri "$edge/demo/v1/employees/NV001/qr"
 $issued.token
 ```
 
 | Kịch bản | Thao tác và kết quả |
 | --- | --- |
-| Hợp lệ | Quét mã mới ở đúng site, đúng chiều. Kiosk hiện `ALLOW`. Sau lượt vào, dùng mã mới để quét ra nếu cần thử lượt vào tiếp theo. |
+| Hợp lệ | Quét mã mới ở đúng site, đúng chiều. Kiosk hiện thông báo đã ghi nhận giờ vào hoặc ra. |
 | Hết hạn | Giữ token API chưa dùng, đợi quá TTL và dung sai đồng hồ khoảng 5 giây. Nhập lại ở kiosk để nhận `TOKEN_EXPIRED`. |
 | Replay | Dùng lại cùng token tại cùng site trước khi hết hạn. Kiosk gửi event ID mới và nhận `REPLAY`. |
-| Thu hồi | Cấp token mới, giữ token rồi dùng mã HR chọn **Thu hồi credential** trong console. Kiosk từ chối token còn hạn với `REVOKED`. Trang nhân viên hiện `REVOKED` ở lần làm mới kế tiếp. Dùng DB demo riêng để lần sau vẫn còn credential mẫu đang hoạt động. |
-| Sai thiết bị | Xin QR bằng mã đăng ký của thiết bị khác để nhận HTTP 403 với `DEVICE_MISMATCH`. Hoặc nhập token hợp lệ ở kiosk và điền Device ID khác để nhận `DENY / DEVICE_MISMATCH`. |
+| Thu hồi | Dùng DB kiểm thử và gọi `POST /qr/v1/credentials/{id}/revoke` bằng bearer HR. Kiosk từ chối token còn hạn và trang nhân viên hiện **Đã thu hồi** ở lần làm mới kế tiếp. |
+| Sai thiết bị | Gọi API cấp token với mã đăng ký của thiết bị khác để nhận HTTP 403 với `DEVICE_MISMATCH`. Xem [hợp đồng API backend](backend/README.md#luồng-và-api-demo). |
 | Hai site | Chạy script hai site. Kết quả mong đợi là `BD ALLOW, LA ALLOW, Central SUSPICIOUS`. |
 
 ### Deviations
@@ -119,6 +134,7 @@ $issued.token
 | --- | --- | --- |
 | Backend | `backend/` | `.\mvnw.cmd test` trên Windows hoặc `./mvnw test` trên macOS/Linux. Dùng `verify` để chạy thêm bước đóng gói JAR. |
 | Frontend | `frontend/` | `npm ci`, `npm run typecheck`, `npm test`, `npm run build`. |
+| Luồng trên trình duyệt | `frontend/` | Bật profile `workflow` và frontend, chạy `npx playwright install chromium` rồi `npm run test:e2e`. Có thể đặt `PLAYWRIGHT_CHROME_PATH` tới Chrome đã cài và `E2E_WORKFLOW_SCREENSHOTS` tới thư mục nhận ba ảnh. Dùng DB demo mới có dữ liệu mẫu của tháng đang xem. |
 | GitHub Actions | `.github/workflows/ci.yml` | Ubuntu chạy `mvn -B test` với Java 21 và chạy `npm ci`, `npm run typecheck`, `npm test` với Node.js 24 khi push hoặc mở pull request. |
 
 ## Cách tổ chức repo
@@ -202,7 +218,7 @@ backend/src/main/java/tmc/
     └── worker/               Attendance, Central sync, đối soát, snapshot và HR
 ```
 
-Frontend chia theo `access`, `userqr`, `attendance`, `console` và `shared`. [Cây frontend chi tiết](frontend/README.md)
+Frontend chia theo `access`, `userqr`, `attendance` và `shared`. [Cây frontend chi tiết](frontend/README.md)
 
 </details>
 

@@ -43,7 +43,9 @@ public final class PolicyStep implements VerificationStep {
     if (!snapshot.isFreshAt(clock.now(), snapshotMaxAge)) {
       return StepResult.deny(Reason.SNAPSHOT_STALE);
     }
-    boolean allowed = policy.allows(context.claims, request) && snapshot.policyAllows(context.claims, request);
-    return allowed ? StepResult.ok() : StepResult.deny(Reason.POLICY_DENIED);
+    context.attendanceGate = policy.isAttendanceGate(request);
+    var denial = policy.denial(context.claims, request);
+    if (denial.isPresent()) return StepResult.deny(denial.get());
+    return snapshot.policyAllows(context.claims, request) ? StepResult.ok() : StepResult.deny(Reason.POLICY_DENIED);
   }
 }

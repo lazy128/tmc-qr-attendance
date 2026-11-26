@@ -1,6 +1,8 @@
 package tmc.access.api;
 
 import java.util.List;
+import java.util.Set;
+import java.time.LocalTime;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,10 +16,13 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.application.PermissionPolicy;
+import tmc.access.domain.Direction;
+import tmc.access.domain.Gate;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry.Station;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry.Status;
 import tmc.shared.DemoIdentity;
+import tmc.shared.StaffDirectory.Group;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
@@ -62,6 +67,7 @@ public class StationRegistryController {
     if (!stations.create(body.stationId(), body.gateId())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "Station already registered");
     }
+    if (body.gate() != null) stations.setGate(body.stationId(), gate(body.gate()));
     audit(actor, "STATION_CREATE", body.stationId());
     return stations.find(body.stationId()).orElseThrow();
   }
@@ -72,12 +78,13 @@ public class StationRegistryController {
       @PathVariable String id, @RequestBody UpdateStation body) {
     String actor = manager(authorization);
     validateId(id, "stationId");
-    if (body.gateId() == null && body.status() == null) throw new IllegalArgumentException("No station changes supplied");
+    if (body.gateId() == null && body.status() == null && body.gate() == null) throw new IllegalArgumentException("No station changes supplied");
     if (body.gateId() != null) validateId(body.gateId(), "gateId");
-    var station = stations.update(id, body.gateId(), body.status())
+    stations.update(id, body.gateId(), body.status())
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Station not found"));
+    if (body.gate() != null) stations.setGate(id, gate(body.gate()));
     audit(actor, "STATION_UPDATE", id);
-    return station;
+    return stations.find(id).orElseThrow();
   }
 
   private String authenticate(String authorization) {
@@ -105,7 +112,20 @@ public class StationRegistryController {
     }
   }
 
-  public record CreateStation(String siteId, String stationId, String gateId) {}
-  public record UpdateStation(String gateId, Status status) {}
+  private Gate gate(GateSettings options) {
+    if (options.name() == null || options.name().isBlank() || options.name().length() > 150
+        || options.type() == null || options.allowedGroups() == null || options.allowedGroups().isEmpty()
+        || options.directions() == null || options.directions().size() != 1
+        || (options.opensAt() == null) != (options.closesAt() == null)) {
+      throw new IllegalArgumentException("Supply a gate name, type, groups, one direction and an optional time range.");
+    }
+    return new Gate(options.name(), stations.site(), options.type(), options.allowedGroups(),
+        options.directions(), options.opensAt(), options.closesAt());
+  }
+
+  public record GateSettings(String name, Gate.Type type, Set<Group> allowedGroups, Set<Direction> directions,
+      LocalTime opensAt, LocalTime closesAt) {}
+  public record CreateStation(String siteId, String stationId, String gateId, GateSettings gate) {}
+  public record UpdateStation(String gateId, Status status, GateSettings gate) {}
   public record StationList(List<Station> stations, boolean canManage) {}
 }

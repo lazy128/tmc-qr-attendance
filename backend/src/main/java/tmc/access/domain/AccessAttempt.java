@@ -25,8 +25,22 @@ public record AccessAttempt(
     Passage passage,
     boolean offlineAccepted,
     Evidence evidence,
-    boolean suspicious
+    boolean suspicious,
+    boolean attendanceGate
 ) {
+  public AccessAttempt(EventId eventId, String correlationId, String employeeId, SiteId siteId,
+      StationId stationId, Direction direction, Instant scannedAt, Instant receivedAt, String credentialId,
+      int credentialVersion, String jti, Decision decision, Reason reasonCode, Command command,
+      Passage passage, boolean offlineAccepted, Evidence evidence, boolean suspicious) {
+    this(eventId, correlationId, employeeId, siteId, stationId, direction, scannedAt, receivedAt,
+        credentialId, credentialVersion, jti, decision, reasonCode, command, passage, offlineAccepted,
+        evidence, suspicious, true);
+  }
+
+  public boolean duplicateScan() {
+    return attendanceGate && employeeId != null && (reasonCode == Reason.REPLAY || reasonCode == Reason.ANTI_PASSBACK);
+  }
+
   public AccessAttempt withCommand(Command next) {
     boolean valid =
         (command == Command.NOT_SENT && next == Command.SENT)
@@ -53,7 +67,7 @@ public record AccessAttempt(
         passage,
         offlineAccepted,
         next == Command.ACKED && passage != Passage.CONFIRMED ? Evidence.ACK_ONLY : evidence,
-        suspicious
+        suspicious, attendanceGate
     );
   }
 
@@ -76,7 +90,7 @@ public record AccessAttempt(
         Passage.CONFIRMED,
         offlineAccepted,
         Evidence.PASSAGE_CONFIRMED,
-        suspicious
+        suspicious, attendanceGate
     );
   }
 
@@ -84,7 +98,7 @@ public record AccessAttempt(
     return new AccessAttempt(
         eventId, correlationId, employeeId, siteId, stationId, direction, scannedAt, receivedAt,
         credentialId, credentialVersion, jti, decision, reasonCode, Command.UNKNOWN, passage,
-        offlineAccepted, passage == Passage.CONFIRMED ? evidence : null, suspicious
+        offlineAccepted, passage == Passage.CONFIRMED ? evidence : null, suspicious, attendanceGate
     );
   }
 }

@@ -56,7 +56,8 @@ public final class PersistAndConsumeStep implements VerificationStep {
         sensorConfigured ? Passage.UNCONFIRMED : Passage.NOT_AVAILABLE,
         false,
         null,
-        false
+        false,
+        context.attendanceGate
     );
     try {
       attempts.persistPrepared(attempt, claims.jti());
