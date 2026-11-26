@@ -21,7 +21,7 @@ import tmc.access.domain.Gate;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry.Station;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry.Status;
-import tmc.shared.DemoIdentity;
+import tmc.shared.Identity;
 import tmc.shared.StaffDirectory.Group;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
@@ -31,12 +31,12 @@ import tmc.shared.web.CorrelationIdFilter;
 @RequestMapping("/admin/v1/stations")
 public class StationRegistryController {
   private final JdbcStationRegistry stations;
-  private final DemoIdentity identity;
+  private final Identity identity;
   private final PermissionPolicy permissions;
   private final AuditWriter audit;
   private final ClockProvider clock;
 
-  public StationRegistryController(JdbcStationRegistry stations, DemoIdentity identity, PermissionPolicy permissions,
+  public StationRegistryController(JdbcStationRegistry stations, Identity identity, PermissionPolicy permissions,
       AuditWriter audit, ClockProvider clock) {
     this.stations = stations;
     this.identity = identity;
@@ -48,9 +48,9 @@ public class StationRegistryController {
   @GetMapping
   public StationList list(@RequestHeader(value = "Authorization", required = false) String authorization) {
     String actor = authenticate(authorization);
-    if (permissions.permits(actor, "stations:manage")) return new StationList(stations.list(), true);
+    if (permissions.permits(actor, "stations:manage")) return new StationList(stations.list(), true, stations.site());
     if (permissions.permits(actor, "stations:read-assigned")) {
-      return new StationList(stations.find(stations.assignedStation()).stream().toList(), false);
+      return new StationList(stations.find(identity.assignedStation(actor).orElse(stations.assignedStation())).stream().toList(), false, stations.site());
     }
     throw forbidden();
   }
@@ -127,5 +127,5 @@ public class StationRegistryController {
       LocalTime opensAt, LocalTime closesAt) {}
   public record CreateStation(String siteId, String stationId, String gateId, GateSettings gate) {}
   public record UpdateStation(String gateId, Status status, GateSettings gate) {}
-  public record StationList(List<Station> stations, boolean canManage) {}
+  public record StationList(List<Station> stations, boolean canManage, String siteId) {}
 }

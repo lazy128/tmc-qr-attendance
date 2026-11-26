@@ -13,8 +13,10 @@ import tmc.attendance.domain.AttendanceRecord;
 import tmc.attendance.domain.TimesheetRow;
 import tmc.attendance.domain.TimesheetRow.Status;
 import tmc.shared.StaffDirectory;
+import tmc.shared.EmployeeDirectory;
 
-public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts) {
+public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDirectory employees) {
+  public TimesheetCalculator(ZoneId zone, LocalTime dayStarts) { this(zone, dayStarts, StaffDirectory::find); }
   public LocalDate workDate(Instant timestamp) {
     var local = timestamp.atZone(zone);
     return local.toLocalTime().isBefore(dayStarts) ? local.toLocalDate().minusDays(1) : local.toLocalDate();
@@ -66,7 +68,7 @@ public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts) {
     }
     Status status = open != null ? Status.MISSING_EXIT : duplicate ? Status.DUPLICATE
         : unresolved || firstIn == null ? Status.REVIEW : Status.COMPLETE;
-    return Optional.of(new Calculation(new TimesheetRow(employeeId, StaffDirectory.name(employeeId), date, site,
+    return Optional.of(new Calculation(new TimesheetRow(employeeId, employees.name(employeeId), date, site,
         firstIn, lastOut, worked.toMinutes(), status, review || status != Status.COMPLETE), open, lastEntry));
   }
 }

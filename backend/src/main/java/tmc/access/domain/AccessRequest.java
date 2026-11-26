@@ -10,5 +10,11 @@ public record AccessRequest(
     Direction direction,
     Instant scannedAt,
     String token,
-    String deviceId
-) {}
+    String deviceId,
+    Instant submittedAt
+) {
+  public AccessRequest(EventId eventId, String correlationId, SiteId siteId, StationId stationId,
+      Direction direction, Instant scannedAt, String token, String deviceId) {
+    this(eventId, correlationId, siteId, stationId, direction, scannedAt, token, deviceId, scannedAt);
+  }
+}

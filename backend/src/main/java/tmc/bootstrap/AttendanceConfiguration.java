@@ -19,6 +19,7 @@ import tmc.attendance.infrastructure.TimesheetService;
 import tmc.attendance.infrastructure.XlsxTimesheetSink;
 import tmc.attendance.infrastructure.GoogleSheetsTimesheetSink;
 import tmc.shared.audit.AuditWriter;
+import tmc.shared.EmployeeDirectory;
 
 @Configuration
 public class AttendanceConfiguration {
@@ -33,9 +34,9 @@ public class AttendanceConfiguration {
   }
 
   @Bean
-  TimesheetCalculator timesheetCalculator(@Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
+  TimesheetCalculator timesheetCalculator(EmployeeDirectory employees, @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
       @Value("${tmc.timesheet.day-start:06:00}") String dayStart) {
-    return new TimesheetCalculator(ZoneId.of(zone), LocalTime.parse(dayStart));
+    return new TimesheetCalculator(ZoneId.of(zone), LocalTime.parse(dayStart), employees);
   }
 
   @Bean

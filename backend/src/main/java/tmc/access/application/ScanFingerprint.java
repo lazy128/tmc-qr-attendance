@@ -15,7 +15,7 @@ final class ScanFingerprint {
       var digest = MessageDigest.getInstance("SHA-256");
       for (String value : new String[] {
           request.stationId().value(), request.siteId().value(), request.direction().name(),
-          request.scannedAt().toString(), request.deviceId(), request.token()
+          request.submittedAt().toString(), request.deviceId(), request.token()
       }) {
         String field = Objects.toString(value, "");
         digest.update((field.length() + ":" + field).getBytes(StandardCharsets.UTF_8));

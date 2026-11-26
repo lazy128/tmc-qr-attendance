@@ -6,6 +6,7 @@ import tmc.access.application.VerificationStep;
 import tmc.access.domain.AccessAttempt;
 import tmc.access.domain.AntiPassbackException;
 import tmc.access.domain.AccessRequest;
+import tmc.access.domain.CredentialChangedException;
 import tmc.access.domain.AccessStates.Command;
 import tmc.access.domain.AccessStates.Decision;
 import tmc.access.domain.AccessStates.Passage;
@@ -68,6 +69,8 @@ public final class PersistAndConsumeStep implements VerificationStep {
       return StepResult.deny(Reason.REPLAY);
     } catch (AntiPassbackException denied) {
       return StepResult.deny(Reason.ANTI_PASSBACK);
+    } catch (CredentialChangedException changed) {
+      return StepResult.deny(changed.reason());
     } catch (RuntimeException persistFailed) {
       return StepResult.deny(Reason.PERSIST_FAILED);
     }

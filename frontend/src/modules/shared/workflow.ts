@@ -3,6 +3,7 @@ import { request, download } from "./http/client";
 export type Group = "STAFF" | "MANAGER" | "EXECUTIVE";
 export type Employee = { id: string; name: string; accessGroup: Group; siteId: string };
 export type AttendanceStatus = {
+  employeeId: string;
   status: "NOT_ENTERED" | "IN_SHIFT" | "LEFT";
   lastEntry: string | null;
   lastExit: string | null;
@@ -11,14 +12,28 @@ export type Pass = AttendanceStatus & { token: string; expiresAt: string };
 export type Station = {
   siteId: string;
   stationId: string;
+  gateId: string;
+  status: "ACTIVE" | "DISABLED";
+  lastHeartbeatAt: string | null;
   gate: {
     name: string;
     type: "ATTENDANCE_GATE" | "ZONE_GATE";
     allowedGroups: Group[];
     directions: ("ENTRY" | "EXIT")[];
+    opensAt?: string | null;
+    closesAt?: string | null;
   };
 };
-export type Role = "EMPLOYEE" | "MANAGER" | "HR";
+export type Role = "EMPLOYEE" | "MANAGER" | "HR" | "GUARD" | "ADMIN";
+export type Account = {
+  username: string;
+  displayName: string;
+  role: Role;
+  enabled: boolean;
+  employeeId: string | null;
+  stationId: string | null;
+  changeRequired: boolean;
+};
 export type Timesheet = {
   employeeId: string;
   employeeName: string;
@@ -37,52 +52,75 @@ export type ScanDetail = {
   direction: string;
   scannedAt: string;
 };
-const auth = (bearer: string) => ({ Authorization: `Bearer ${bearer}` });
 const sheets = "/attendance/v1/timesheets";
 
-export const workflow = {
-  employees: (signal: AbortSignal) => request<Employee[]>("/demo/v1/employees", { signal }),
-  pass: (id: string, signal: AbortSignal) =>
-    request<Pass>(`/demo/v1/employees/${encodeURIComponent(id)}/qr`, { method: "POST", signal }),
-  attendance: (id: string, signal: AbortSignal) =>
-    request<AttendanceStatus>(`/demo/v1/employees/${encodeURIComponent(id)}/attendance`, {
-      signal,
-    }),
-  gates: (base: string, signal: AbortSignal) =>
-    request<Station[]>("/demo/v1/gates", { signal }, base),
-  session: (role: Role, employeeId: string, signal: AbortSignal) =>
-    request<{ bearer: string }>("/demo/v1/session", {
+export const accountApi = {
+  me: (signal: AbortSignal) => request<Account>("/auth/v1/me", { signal }),
+  login: (username: string, password: string) =>
+    request<Account>("/auth/v1/login", {
       method: "POST",
-      body: JSON.stringify({ role, employeeId }),
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => request<void>("/auth/v1/logout", { method: "POST" }),
+  password: (current: string, replacement: string) =>
+    request<void>("/auth/v1/password", {
+      method: "POST",
+      body: JSON.stringify({ current, replacement }),
+    }),
+  list: (signal: AbortSignal) => request<Account[]>("/workplace/v1/accounts", { signal }),
+  create: (body: Record<string, FormDataEntryValue | null>) =>
+    request<Account>("/workplace/v1/accounts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  update: (username: string, body: { enabled?: boolean; password?: string }) =>
+    request<Account>(`/workplace/v1/accounts/${encodeURIComponent(username)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+};
+
+export const workflow = {
+  employee: (signal: AbortSignal) => request<Employee>("/workplace/v1/me/employee", { signal }),
+  pass: (signal: AbortSignal) => request<Pass>("/workplace/v1/me/qr", { method: "POST", signal }),
+  attendance: (signal: AbortSignal) =>
+    request<AttendanceStatus>("/workplace/v1/me/attendance", { signal }),
+  station: (signal: AbortSignal) => request<Station>("/workplace/v1/station", { signal }),
+  stations: (signal: AbortSignal) =>
+    request<{ stations: Station[]; canManage: boolean; siteId: string }>("/admin/v1/stations", {
       signal,
     }),
-  rows: (bearer: string, month: string, employeeId: string, signal: AbortSignal) =>
+  rows: (month: string, employeeId: string, signal: AbortSignal) =>
     request<Timesheet[]>(
       `${sheets}?${new URLSearchParams({ month, ...(employeeId ? { employeeId } : {}) })}`,
-      { headers: auth(bearer), signal },
+      { signal },
     ),
-  roster: (bearer: string, signal: AbortSignal) =>
+  roster: (signal: AbortSignal) =>
     request<{ employeeId: string; employeeName: string }[]>(`${sheets}/employees`, {
-      headers: auth(bearer),
       signal,
     }),
-  status: (bearer: string, month: string, signal: AbortSignal) =>
+  status: (month: string, signal: AbortSignal) =>
     request<{ status: string; updatedAt: string | null }>(
       `${sheets}/export-status?month=${encodeURIComponent(month)}`,
-      { headers: auth(bearer), signal },
+      { signal },
     ),
-  details: (bearer: string, employeeId: string, date: string) =>
-    request<ScanDetail[]>(`${sheets}/details?${new URLSearchParams({ employeeId, date })}`, {
-      headers: auth(bearer),
-    }),
-  correct: (bearer: string, employeeId: string, date: string, exitAt: string, reason: string) =>
+  details: (employeeId: string, date: string) =>
+    request<ScanDetail[]>(`${sheets}/details?${new URLSearchParams({ employeeId, date })}`),
+  correct: (employeeId: string, date: string, exitAt: string, reason: string) =>
     request<Timesheet>(`${sheets}/corrections`, {
       method: "POST",
-      headers: auth(bearer),
       body: JSON.stringify({ employeeId, date, exitAt, reason }),
     }),
-  export: (bearer: string, month: string, type: "xlsx" | "csv") =>
-    download(`${sheets}/${type}?month=${encodeURIComponent(month)}`, { headers: auth(bearer) }),
+  export: (month: string, type: "xlsx" | "csv") =>
+    download(`${sheets}/${type}?month=${encodeURIComponent(month)}`, {}),
+};
+
+export const roleLabel: Record<Role, string> = {
+  EMPLOYEE: "Nhân viên",
+  MANAGER: "Quản lý",
+  HR: "Nhân sự",
+  GUARD: "Bảo vệ",
+  ADMIN: "Quản trị viên",
 };
 
 export const groupLabel: Record<Group, string> = {

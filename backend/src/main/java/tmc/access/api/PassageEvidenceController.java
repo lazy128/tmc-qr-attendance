@@ -10,19 +10,23 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.application.RecordPassageEvidence;
-import tmc.shared.DemoIdentity;
+import tmc.access.application.PermissionPolicy;
+import tmc.shared.Identity;
 
 @RestController
 public class PassageEvidenceController {
   private final RecordPassageEvidence recorder;
-  private final DemoIdentity identity;
+  private final Identity identity;
+  private final PermissionPolicy permissions;
   private final String station;
 
   public PassageEvidenceController(
-      RecordPassageEvidence recorder, DemoIdentity identity, @Value("${tmc.edge.station:GATE-1}") String station
+      RecordPassageEvidence recorder, Identity identity, PermissionPolicy permissions,
+      @Value("${tmc.edge.station:GATE-1}") String station
   ) {
     this.recorder = recorder;
     this.identity = identity;
+    this.permissions = permissions;
     this.station = station;
   }
 
@@ -32,9 +36,9 @@ public class PassageEvidenceController {
       @RequestHeader("X-Station-Id") String stationId, @RequestBody PassageRequest request
   ) {
     String actor = identity.authenticate(authorization)
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Enter a valid demo bearer token"));
-    if (!"guard".equals(actor) || !station.equals(stationId)) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Demo passage evidence requires the assigned guard");
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Đăng nhập tài khoản bảo vệ."));
+    if (!permissions.permits(actor, "presence:correct") || !identity.assignedStation(actor).orElse(station).equals(stationId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bảo vệ chỉ được xác nhận tại trạm được giao.");
     }
     recorder.confirmed(request.eventId(), stationId);
     return Map.of("status", "CONFIRMED");

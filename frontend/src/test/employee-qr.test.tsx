@@ -5,8 +5,15 @@ import { workflow } from "../modules/shared/workflow";
 import { ApiRequestError } from "../modules/shared/http/client";
 import QRCode from "qrcode";
 
-vi.mock("../modules/shared/ui/DemoPage", () => ({
-  DemoPage: ({ children }: { children: React.ReactNode }) => children,
+vi.mock("../modules/shared/ui/AppPage", () => ({
+  AppPage: ({ children }: { children: React.ReactNode }) => children,
+}));
+vi.mock("../modules/shared/ui/Auth", () => ({
+  RequireAccount: ({
+    children,
+  }: {
+    children: (account: { username: string; employeeId: string }) => React.ReactNode;
+  }) => children({ username: "nhanvien", employeeId: "NV001" }),
 }));
 vi.mock("qrcode", () => ({ default: { toCanvas: vi.fn().mockResolvedValue(undefined) } }));
 
@@ -22,10 +29,15 @@ const staff = {
   siteId: "SITE-BD",
   accessGroup: "STAFF",
 } as const;
-const attendance = { status: "NOT_ENTERED", lastEntry: null, lastExit: null } as const;
+const attendance = {
+  employeeId: staff.id,
+  status: "NOT_ENTERED",
+  lastEntry: null,
+  lastExit: null,
+} as const;
 beforeEach(() => {
   vi.stubEnv("VITE_QR_SCAN_ORIGIN", "");
-  vi.spyOn(workflow, "employees").mockResolvedValue([staff]);
+  vi.spyOn(workflow, "employee").mockResolvedValue(staff);
   vi.spyOn(workflow, "attendance").mockResolvedValue(attendance);
 });
 
@@ -54,7 +66,8 @@ it("renders a prefixed QR, refreshes eight seconds before expiry and clears a re
     "tmc1:first",
     expect.any(Object),
   );
-  expect(issue).toHaveBeenCalledWith("NV001", expect.any(AbortSignal));
+  expect(issue).toHaveBeenCalledWith(expect.any(AbortSignal));
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   await advance(21_000);
   expect(issue).toHaveBeenCalledTimes(1);
   await advance(1_000);
@@ -91,6 +104,7 @@ it("renders a phone link and confirms attendance without replacing the current Q
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
   });
   vi.mocked(workflow.attendance).mockResolvedValue({
+    employeeId: staff.id,
     status: "IN_SHIFT",
     lastEntry: new Date().toISOString(),
     lastExit: null,
@@ -109,6 +123,20 @@ it("renders a phone link and confirms attendance without replacing the current Q
   expect(screen.getByRole("status")).toHaveTextContent("Đã ghi nhận giờ vào");
   expect(screen.getByRole("img", { name: "Mã QR truy cập" })).toBe(canvas);
   expect(issue).toHaveBeenCalledTimes(1);
+});
+
+it("hides a QR returned for a different account after a session changes", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(workflow, "pass").mockResolvedValue({
+    ...attendance,
+    employeeId: "NV002",
+    token: "wrong-identity",
+    expiresAt: new Date(Date.now() + 30_000).toISOString(),
+  });
+  render(<EmployeePage />);
+  await advance(0);
+  await advance(0);
+  expect(screen.queryByRole("img", { name: "Mã QR truy cập" })).not.toBeInTheDocument();
 });
 
 it("budgets time to open a phone link even when the laptop clock is behind", async () => {

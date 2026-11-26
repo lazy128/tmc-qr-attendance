@@ -1,30 +1,40 @@
 # Backend Edge
 
-Java 21, Spring Boot 3, Maven và H2. Service này chạy Access tại Edge và cung cấp các API QR, attendance và báo cáo của demo.
+Java 21, Spring Boot 3, Maven và H2. Profile mặc định `workplace` phục vụ đăng nhập, kiểm soát QR, chấm công và báo cáo.
 
 ## Chạy Edge
 
-Chạy trong `backend/`. Dùng Java 21 và chọn một cách khởi động.
+Trên Windows, chạy `.\scripts\start-workplace.ps1 -Initialize -AllowHttp` từ thư mục `backend`. Các lần sau bỏ `-Initialize`. Trên macOS/Linux, đặt `TMC_SESSION_KEY` là khóa bí mật ngẫu nhiên ít nhất 32 byte, mã hóa Base64, cùng `TMC_ADMIN_PASSWORD` cho lần đầu chạy `./mvnw spring-boot:run`. Giữ lại cùng khóa cho các lần khởi động sau.
 
-**Maven Wrapper trên Windows**
+Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose up --build`. Backend được publish tại `127.0.0.1:8084` và ghi dữ liệu vào volume `workplace-data`. Volume `workplace-exports` lưu bảng tính. Đặt `EDGE_PORT` để đổi cổng publish. `docker compose down` giữ cả hai volume.
 
-```powershell
-$env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
-$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
-.\mvnw.cmd spring-boot:run
-```
+| Tham số | Mục đích |
+| --- | --- |
+| `TMC_SESSION_KEY` | Khóa ký JWT đăng nhập. Không ghi khóa vào Git. |
+| `TMC_ADMIN_USERNAME`, `TMC_ADMIN_PASSWORD` | Khởi tạo quản trị viên đầu tiên. Mặc định username là `admin`; mật khẩu do người triển khai đặt. |
+| `TMC_SESSION_SECURE`, `TMC_CORS_ORIGINS` | Cookie mặc định Secure. Đặt origin chính xác và chỉ tắt Secure khi kiểm tra HTTP cục bộ. |
+| `TMC_DB_USERNAME`, `TMC_DB_PASSWORD` | Thông tin kết nối H2 dạng tệp. Mặc định `sa` với mật khẩu trống cho máy cá nhân. |
+| `tmc.edge.site`, `tmc.edge.station` | `SITE-BD` và `BD-G01`. Trạm ra khởi tạo là `BD-G01-OUT`. |
+| `tmc.qr.ttl-seconds`, `tmc.qr.keystore` | QR hiệu lực 30 giây. Có thể cấu hình PKCS#12 và mật khẩu qua `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 khi khởi động lại. QR đã phát trước khi đổi khóa cần được cấp mới. |
 
-Trên macOS/Linux, dùng `export TMC_HR_DEMO_TOKEN=tmc-local-hr` và `./mvnw spring-boot:run`. Backend mặc định nghe tại `127.0.0.1:8080` và lưu dữ liệu H2 ở `data/`. Khi dùng JAR, chạy `.\mvnw.cmd verify` rồi `java -jar target/qr-attendance-edge-1.0.0.jar` với cùng cấu hình.
+## API bản nộp
 
-**Docker Compose**
+| API | Quyền và dữ liệu |
+| --- | --- |
+| `POST /auth/v1/login` | Kiểm tra BCrypt trong DB, cấp JWT phiên qua cookie HttpOnly. |
+| `GET /auth/v1/me`, `POST /auth/v1/password`, `POST /auth/v1/logout` | Đọc danh tính, đổi mật khẩu và kết thúc phiên trong DB. |
+| `GET /workplace/v1/me/employee`, `POST /workplace/v1/me/qr`, `GET /workplace/v1/me/attendance` | Lấy hồ sơ, cấp QR và xem trạng thái công của chính nhân viên trong phiên. |
+| `GET /workplace/v1/station` | Chỉ Bảo vệ, trả trạm đang hoạt động được gán. |
+| `POST /access/v1/verify` | Kiểm tra phiên Bảo vệ, trạm, JWT QR, quyền vào/ra và idempotency. `Idempotency-Key` trùng `eventId`. |
+| `GET /access/v1/scans/{id}` | Khôi phục kết quả theo mã lượt và trạm được gán. |
+| `GET/POST /workplace/v1/accounts`, `PATCH /workplace/v1/accounts/{username}` | Chỉ Quản trị viên, quản lý tài khoản và trạng thái. |
+| `GET/POST /admin/v1/stations`, `PATCH /admin/v1/stations/{id}` | Quản lý registry trạm, hướng, nhóm và giờ hoạt động. |
+| `GET /attendance/v1/timesheets?month=YYYY-MM` | Tra bảng công trong phạm vi của phiên. |
+| `POST /attendance/v1/timesheets/corrections`, `GET /attendance/v1/timesheets/{csv,xlsx}` | Chỉ Nhân sự, bổ sung giờ ra và xuất báo cáo. |
 
-```powershell
-$env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
-$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
-docker compose up --build
-```
+Xác minh dùng giờ Edge nhận yêu cầu mới. Yêu cầu đã lưu được tra lại bằng `eventId` và dữ liệu gốc, kể cả khi QR đã hết hạn. Bảng công nhận kết quả qua outbox sau khi Edge ghi quyết định và xác nhận phần mềm.
 
-Compose build JAR bằng Maven, chạy bằng JRE 21 và publish cổng trên loopback. Đây là cấu hình demo với fake Turnstile. Đặt `EDGE_DEMO_PORT` nếu cổng 8080 đang được dùng. `docker compose down` dừng service và giữ volume H2 `edge-data`.
+Các hợp đồng cũ phía dưới dùng cho profile kiểm thử kiến trúc `legacy`, `workflow`, `bd` và `la`. Chạy riêng với DB kiểm thử. Bản nộp mặc định chạy `workplace`.
 
 ## Luồng và API demo
 

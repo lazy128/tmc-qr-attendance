@@ -14,7 +14,7 @@ import tmc.access.api.ApiError;
 import tmc.access.application.PermissionPolicy;
 import tmc.access.application.ScopeResolver;
 import tmc.access.domain.port.CredentialReader;
-import tmc.shared.DemoIdentity;
+import tmc.shared.Identity;
 import tmc.userqr.application.IssueQrToken;
 import tmc.userqr.application.RevokeCredential;
 import tmc.shared.audit.AuditWriter;
@@ -28,14 +28,14 @@ public class UserQrController {
   private final RevokeCredential revoke;
   private final AuditWriter audit;
   private final ClockProvider clock;
-  private final DemoIdentity identity;
+  private final Identity identity;
   private final PermissionPolicy permissions;
   private final ScopeResolver scopes;
   private final CredentialReader credentials;
   private final JdbcDeviceBindings devices;
 
   public UserQrController(IssueQrToken issue, RevokeCredential revoke, AuditWriter audit, ClockProvider clock,
-      DemoIdentity identity, PermissionPolicy permissions, ScopeResolver scopes,
+      Identity identity, PermissionPolicy permissions, ScopeResolver scopes,
       CredentialReader credentials, JdbcDeviceBindings devices) {
     this.issue = issue;
     this.revoke = revoke;

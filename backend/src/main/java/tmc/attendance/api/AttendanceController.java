@@ -20,7 +20,7 @@ import tmc.access.application.ScopeResolver;
 import tmc.attendance.application.AttendanceCsv;
 import tmc.attendance.application.AttendanceRecordStore;
 import tmc.attendance.domain.AttendanceRecord;
-import tmc.shared.DemoIdentity;
+import tmc.shared.Identity;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
@@ -28,7 +28,7 @@ import tmc.shared.web.CorrelationIdFilter;
 @RestController
 public class AttendanceController {
   private final AttendanceRecordStore records;
-  private final DemoIdentity identity;
+  private final Identity identity;
   private final PermissionPolicy permissions;
   private final ScopeResolver scopes;
   private final AuditWriter audit;
@@ -36,7 +36,7 @@ public class AttendanceController {
   private final ZoneId zone;
 
   public AttendanceController(
-      AttendanceRecordStore records, DemoIdentity identity, PermissionPolicy permissions,
+      AttendanceRecordStore records, Identity identity, PermissionPolicy permissions,
       ScopeResolver scopes, AuditWriter audit, ClockProvider clock,
       @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone
   ) {

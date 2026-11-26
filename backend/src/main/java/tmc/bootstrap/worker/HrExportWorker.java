@@ -4,6 +4,7 @@ import java.sql.Timestamp;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import tmc.shared.clock.ClockProvider;
 
 /** Local HR simulation: stores the batch and its simulated receipt in one transaction. */
 @Component
+@ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "false", matchIfMissing = true)
 public class HrExportWorker {
   private final AttendanceRecordStore records;
   private final ScopeResolver scopes;

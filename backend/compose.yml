@@ -2,18 +2,21 @@ services:
   edge:
     build: .
     ports:
-      - "127.0.0.1:${EDGE_DEMO_PORT:-8080}:8080"
+      - "127.0.0.1:${EDGE_PORT:-8084}:8080"
     environment:
       SERVER_ADDRESS: 0.0.0.0
-      TMC_HR_DEMO_TOKEN: "${TMC_HR_DEMO_TOKEN:-}"
-      TMC_EMPLOYEE_DEMO_TOKEN: "${TMC_EMPLOYEE_DEMO_TOKEN:-}"
-      TMC_EMPLOYEE_2_DEMO_TOKEN: "${TMC_EMPLOYEE_2_DEMO_TOKEN:-}"
-      TMC_ADMIN_DEMO_TOKEN: "${TMC_ADMIN_DEMO_TOKEN:-}"
-      TMC_GUARD_DEMO_TOKEN: "${TMC_GUARD_DEMO_TOKEN:-}"
-      TMC_MANAGER_DEMO_TOKEN: "${TMC_MANAGER_DEMO_TOKEN:-}"
-    command: ["--tmc.edge.snapshot-max-age-seconds=900"]
+      TMC_SESSION_KEY: "${TMC_SESSION_KEY:?Cần khóa phiên Base64}"
+      TMC_SESSION_SECURE: "${TMC_SESSION_SECURE:-true}"
+      TMC_ADMIN_USERNAME: "${TMC_ADMIN_USERNAME:-admin}"
+      TMC_ADMIN_PASSWORD: "${TMC_ADMIN_PASSWORD:-}"
+      TMC_DB_USERNAME: "${TMC_DB_USERNAME:-sa}"
+      TMC_DB_PASSWORD: "${TMC_DB_PASSWORD:-}"
+      TMC_CORS_ORIGINS: "${TMC_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+    command: ["--spring.profiles.active=workplace", "--server.port=8080"]
     volumes:
-      - edge-data:/app/data
+      - workplace-data:/app/data
+      - workplace-exports:/app/exports
 
 volumes:
-  edge-data:
+  workplace-data:
+  workplace-exports:

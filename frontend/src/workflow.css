@@ -47,13 +47,14 @@
   flex-wrap: wrap;
   gap: 4px;
 }
-.workflow-bar nav a {
+.workflow-bar nav :is(a, button) {
   padding: 8px 12px;
   border-radius: 8px;
   color: var(--workflow-muted);
   font-weight: 650;
 }
 .workflow-bar nav a:hover,
+.workflow-bar nav button:hover,
 .workflow-bar nav a[aria-current="page"] {
   color: #07533e;
   background: #e1f2e9;
@@ -153,6 +154,12 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+.workflow-login {
+  width: min(100%, 420px);
+  margin-inline: auto;
+  display: grid;
+  gap: 16px;
+}
 .workflow-technical {
   margin-top: 12px;
   border: 1px solid var(--workflow-border);
@@ -204,6 +211,9 @@
   margin-inline: auto;
 }
 .workflow-app:has(.workflow-pass) .workflow-main > h1 {
+  text-align: center;
+}
+.workflow-app:has(.workflow-pass) .workflow-subtitle {
   text-align: center;
 }
 .workflow-pass-content {
@@ -301,6 +311,7 @@
 }
 .workflow-scan p {
   color: #d3e8df;
+  overflow-wrap: anywhere;
 }
 .workflow-scan.accepted {
   color: #0b573d;

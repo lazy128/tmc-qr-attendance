@@ -24,7 +24,7 @@ public final class JdbcTimesheets {
   }
 
   public boolean saveIfChanged(TimesheetRow row) {
-    var saved = jdbc.query("SELECT * FROM daily_timesheet WHERE employee_id=? AND work_date=?",
+    var saved = jdbc.query("SELECT s.*, e.full_name FROM daily_timesheet s LEFT JOIN workplace_employee e USING (employee_id) WHERE s.employee_id=? AND s.work_date=?",
         rs -> rs.next() ? readRow(rs) : null, row.employeeId(), row.workDate());
     if (row.equals(saved)) return false;
     jdbc.update("""
@@ -37,7 +37,7 @@ public final class JdbcTimesheets {
   }
 
   public List<TimesheetRow> month(YearMonth period) {
-    return jdbc.query("SELECT * FROM daily_timesheet WHERE work_date>=? AND work_date<? ORDER BY work_date,employee_id",
+    return jdbc.query("SELECT s.*, e.full_name FROM daily_timesheet s LEFT JOIN workplace_employee e USING (employee_id) WHERE s.work_date>=? AND s.work_date<? ORDER BY s.work_date,s.employee_id",
         (rs, index) -> readRow(rs), period.atDay(1), period.plusMonths(1).atDay(1));
   }
 
@@ -82,7 +82,8 @@ public final class JdbcTimesheets {
 
   private static TimesheetRow readRow(ResultSet rs) throws SQLException {
     String id = rs.getString("employee_id");
-    return new TimesheetRow(id, StaffDirectory.name(id), rs.getObject("work_date", LocalDate.class),
+    var name = rs.getString("full_name");
+    return new TimesheetRow(id, name == null ? StaffDirectory.name(id) : name, rs.getObject("work_date", LocalDate.class),
         rs.getString("site_id"), instant(rs, "first_in"), instant(rs, "last_out"), rs.getLong("worked_minutes"),
         TimesheetRow.Status.valueOf(rs.getString("status")), rs.getBoolean("review_flag"));
   }

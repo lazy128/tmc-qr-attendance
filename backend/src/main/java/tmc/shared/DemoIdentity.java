@@ -8,7 +8,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Resolves configured demo bearer tokens to server-side identities. */
-public final class DemoIdentity {
+public final class DemoIdentity implements Identity {
   private final Map<String, String> tokens;
   private final Map<String, String> workflowTokens;
 
@@ -31,7 +31,7 @@ public final class DemoIdentity {
 
   public Optional<String> workflowToken(String actor) { return Optional.ofNullable(workflowTokens.get(actor)); }
 
-  public Optional<String> authenticate(String header) {
+  @Override public Optional<String> authenticate(String header) {
     if (header == null || !header.startsWith("Bearer ")) return Optional.empty();
     byte[] supplied = header.substring(7).getBytes(StandardCharsets.UTF_8);
     return tokens.entrySet().stream()

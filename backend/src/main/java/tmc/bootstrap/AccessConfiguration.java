@@ -22,6 +22,8 @@ import java.util.Set;
 import java.util.Map;
 import java.util.HashMap;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -39,11 +41,13 @@ import tmc.access.application.VerificationPipeline;
 import tmc.access.application.VerifyAccessUseCase;
 import tmc.access.domain.port.Credential;
 import tmc.access.domain.port.GateResult;
+import tmc.access.domain.port.GateCommandSender;
 import tmc.access.domain.port.SnapshotProvider;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.AccessRequest;
 import tmc.access.infrastructure.security.Es256TokenCodec;
 import tmc.access.infrastructure.turnstile.FakeTurnstileAdapter;
+import tmc.access.infrastructure.turnstile.SoftwareAttendanceAdapter;
 import tmc.access.infrastructure.snapshot.FileSnapshotProvider;
 import tmc.access.infrastructure.persistence.JdbcCredentialStore;
 import tmc.access.infrastructure.persistence.JdbcPresenceTracker;
@@ -53,6 +57,7 @@ import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
 import tmc.access.infrastructure.snapshot.MutableSnapshot;
 import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
 import tmc.shared.clock.ClockProvider;
+import tmc.shared.EmployeeDirectory;
 import tmc.shared.StaffDirectory;
 import tmc.shared.StaffDirectory.Employee;
 import tmc.shared.StaffDirectory.Group;
@@ -60,24 +65,26 @@ import tmc.shared.StaffDirectory.Group;
 @Configuration
 public class AccessConfiguration {
   @Bean
-  JdbcCredentialStore credentialStore(JdbcTemplate jdbc) {
+  JdbcCredentialStore credentialStore(JdbcTemplate jdbc, @Value("${tmc.accounts.enabled:false}") boolean workplace) {
     var store = new JdbcCredentialStore(jdbc);
+    if (workplace) return store;
     store.seedIfMissing(new Credential("demo-credential", "demo-employee", 1, true, "demo-device"));
     store.seedIfMissing(new Credential("demo-credential-2", "demo-employee-2", 1, true, "demo-device-2"));
     return store;
   }
 
   @Bean
-  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc) {
-    return new JdbcPresenceTracker(jdbc);
+  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc, @Value("${tmc.accounts.enabled:false}") boolean workplace) {
+    return new JdbcPresenceTracker(jdbc, workplace);
   }
 
   @Bean
   SnapshotProvider snapshot(
-      ClockProvider clock, ObjectMapper json, JdbcCredentialStore credentials,
+      ClockProvider clock, ObjectMapper json, JdbcCredentialStore credentials, EmployeeDirectory employees,
       @Value("${tmc.edge.site:SITE-1}") String site,
       @Value("${tmc.edge.snapshot-file:}") String snapshotFile,
-      @Value("${tmc.edge.local-demo-authority:true}") boolean localAuthority
+      @Value("${tmc.edge.local-demo-authority:true}") boolean localAuthority,
+      @Value("${tmc.accounts.enabled:false}") boolean workplace
   ) {
     if (!snapshotFile.isBlank()) return new FileSnapshotProvider(Path.of(snapshotFile), json);
     if (!localAuthority) return new MutableSnapshot(Instant.EPOCH);
@@ -87,9 +94,12 @@ public class AccessConfiguration {
       @Override public boolean revoked(String credentialId) { return false; }
       @Override public boolean policyAllows(Claims claims, AccessRequest request) { return true; }
       @Override public Optional<Employee> employeeForCredential(String id) {
-        return credentials.getCredential(id).map(credential -> StaffDirectory.find(credential.employeeId())
-            .orElseGet(() -> new Employee(credential.employeeId(), credential.employeeId(), Group.STAFF,
-                "LOCAL", "STANDARD", site, credential.active())));
+        return credentials.getCredential(id).flatMap(credential -> {
+          var employee = employees.find(credential.employeeId());
+          if (workplace || employee.isPresent()) return employee;
+          return Optional.of(new Employee(credential.employeeId(), credential.employeeId(), Group.STAFF,
+              "LOCAL", "STANDARD", site, credential.active()));
+        });
       }
     };
   }
@@ -128,17 +138,22 @@ public class AccessConfiguration {
     );
   }
 
-  @Bean
+  @Bean("recordingAdapter")
+  @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "false", matchIfMissing = true)
   FakeTurnstileAdapter turnstile() {
     return new FakeTurnstileAdapter(GateResult.ACKED);
   }
 
+  @Bean("recordingAdapter")
+  @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "true")
+  SoftwareAttendanceAdapter softwareAttendance() { return new SoftwareAttendanceAdapter(); }
+
   @Bean(destroyMethod = "close")
   TimeoutGateCommandSender boundedTurnstile(
-      FakeTurnstileAdapter fake,
+      @Qualifier("recordingAdapter") GateCommandSender adapter,
       @Value("${tmc.turnstile.timeout-millis:800}") long timeout
   ) {
-    return new TimeoutGateCommandSender(fake, timeout);
+    return new TimeoutGateCommandSender(adapter, timeout);
   }
 
   @Bean
@@ -160,15 +175,17 @@ public class AccessConfiguration {
   JdbcStationRegistry stationRegistry(JdbcTemplate jdbc,
       @Value("${tmc.edge.station:GATE-1}") String station,
       @Value("${tmc.edge.site:SITE-1}") String site,
-      @Value("${tmc.workflow.demo:false}") boolean demo) {
+      @Value("${tmc.workflow.demo:false}") boolean demo,
+      @Value("${tmc.accounts.enabled:false}") boolean workplace) {
     var registry = new JdbcStationRegistry(jdbc, site, station);
-    if (!demo) return registry;
+    if (!demo && !workplace) return registry;
     String location = "SITE-LA".equals(site) ? "Long An" : "Bình Dương";
     var all = EnumSet.allOf(Group.class);
     registry.seedGate(station, new Gate(location + " – Cổng vào 1", site, Gate.Type.ATTENDANCE_GATE,
         all, Set.of(Direction.ENTRY), null, null));
     registry.seedGate(station + "-OUT", new Gate(location + " – Cổng ra 1", site, Gate.Type.ATTENDANCE_GATE,
         all, Set.of(Direction.EXIT), null, null));
+    if (workplace) return registry;
     registry.seedGate(station + "-PROD", new Gate(location + " – Khu sản xuất", site, Gate.Type.ZONE_GATE,
         Set.of(Group.STAFF, Group.MANAGER), Set.of(Direction.ENTRY), null, null));
     registry.seedGate(station + "-OFFICE", new Gate(location + " – Văn phòng quản lý", site, Gate.Type.ZONE_GATE,

@@ -28,8 +28,8 @@ import tmc.attendance.domain.TimesheetRow;
 import tmc.attendance.infrastructure.JdbcTimesheets;
 import tmc.attendance.infrastructure.TimesheetService;
 import tmc.attendance.infrastructure.XlsxTimesheetSink;
-import tmc.shared.DemoIdentity;
-import tmc.shared.StaffDirectory;
+import tmc.shared.Identity;
+import tmc.shared.EmployeeDirectory;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
@@ -40,16 +40,18 @@ public class TimesheetController {
   private final JdbcTimesheets store;
   private final XlsxTimesheetSink xlsx;
   private final TimesheetCalculator calculator;
-  private final DemoIdentity identity;
+  private final Identity identity;
   private final PermissionPolicy permissions;
   private final ScopeResolver scopes;
   private final AuditWriter audit;
   private final ClockProvider clock;
   private final String workbookActor;
+  private final EmployeeDirectory employees;
 
   public TimesheetController(TimesheetService timesheets, JdbcTimesheets store, XlsxTimesheetSink xlsx,
-      TimesheetCalculator calculator, DemoIdentity identity, PermissionPolicy permissions, ScopeResolver scopes,
-      AuditWriter audit, ClockProvider clock, @Value("${tmc.workflow.demo:false}") boolean demo) {
+      TimesheetCalculator calculator, Identity identity, PermissionPolicy permissions, ScopeResolver scopes,
+      AuditWriter audit, ClockProvider clock, EmployeeDirectory employees,
+      @Value("${tmc.workflow.demo:false}") boolean demo, @Value("${tmc.accounts.enabled:false}") boolean workplace) {
     this.timesheets = timesheets;
     this.store = store;
     this.xlsx = xlsx;
@@ -59,7 +61,8 @@ public class TimesheetController {
     this.scopes = scopes;
     this.audit = audit;
     this.clock = clock;
-    this.workbookActor = demo ? "work-hr" : "hr";
+    this.workbookActor = workplace ? null : demo ? "work-hr" : "hr";
+    this.employees = employees;
   }
 
   @GetMapping("/attendance/v1/timesheets")
@@ -78,7 +81,7 @@ public class TimesheetController {
   @GetMapping("/attendance/v1/timesheets/employees")
   public List<EmployeeOption> employees(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth) {
     return visible(authorize(auth, "attendance:read")).stream().sorted()
-        .map(id -> new EmployeeOption(id, StaffDirectory.name(id))).toList();
+        .map(id -> new EmployeeOption(id, employees.name(id))).toList();
   }
 
   @GetMapping("/attendance/v1/timesheets/details")
@@ -143,7 +146,7 @@ public class TimesheetController {
 
   private String workbookActor(String header) {
     String actor = authorize(header, "attendance:export");
-    if (!actor.equals(workbookActor)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bảng tính thuộc phạm vi HR khác.");
+    if (workbookActor != null && !actor.equals(workbookActor)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bảng tính thuộc phạm vi HR khác.");
     return actor;
   }
 

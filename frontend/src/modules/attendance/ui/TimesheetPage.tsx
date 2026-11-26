@@ -1,12 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { errorMessage } from "../../shared/lib/error-message";
-import { DemoPage } from "../../shared/ui/DemoPage";
+import { AppPage } from "../../shared/ui/AppPage";
+import { RequireAccount } from "../../shared/ui/Auth";
 import {
   businessZone,
   displayTime,
   workflow,
-  type Employee,
   type Role,
   type ScanDetail,
   type Timesheet,
@@ -42,7 +42,7 @@ function hours(minutes: number) {
   return `${Math.floor(minutes / 60)} giờ ${String(minutes % 60).padStart(2, "0")} phút`;
 }
 
-function TechnicalRow({ row, bearer }: { row: Timesheet; bearer: string }) {
+function TechnicalRow({ row }: { row: Timesheet }) {
   const [scans, setScans] = useState<ScanDetail[] | null>(null);
   const [error, setError] = useState("");
   return (
@@ -52,13 +52,13 @@ function TechnicalRow({ row, bearer }: { row: Timesheet; bearer: string }) {
         if (event.currentTarget.open && scans === null) {
           setError("");
           void workflow
-            .details(bearer, row.employeeId, row.workDate)
+            .details(row.employeeId, row.workDate)
             .then(setScans)
             .catch((cause) => setError(errorMessage(cause)));
         }
       }}
     >
-      <summary>Chi tiết kỹ thuật</summary>
+      <summary>Lượt chấm công</summary>
       {error ? (
         <p role="alert">{error}</p>
       ) : scans ? (
@@ -81,12 +81,18 @@ function TechnicalRow({ row, bearer }: { row: Timesheet; bearer: string }) {
 }
 
 export function TimesheetPage() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [role, setRole] = useState<Role>("HR");
-  const [employee, setEmployee] = useState("");
+  return (
+    <AppPage title="Bảng công theo ngày">
+      <RequireAccount roles={["EMPLOYEE", "MANAGER", "HR"]}>
+        {(account) => <Timesheet key={account.username} role={account.role} />}
+      </RequireAccount>
+    </AppPage>
+  );
+}
+
+function Timesheet({ role }: { role: Role }) {
   const [month, setMonth] = useState(currentMonth);
   const [filter, setFilter] = useState("");
-  const [bearer, setBearer] = useState("");
   const [rows, setRows] = useState<Timesheet[]>([]);
   const [roster, setRoster] = useState<{ employeeId: string; employeeName: string }[]>([]);
   const [publication, setPublication] = useState<{
@@ -98,36 +104,18 @@ export function TimesheetPage() {
   const [operation, setOperation] = useState(false);
   const [reload, setReload] = useState(0);
   const [edit, setEdit] = useState<Timesheet | null>(null);
-  const effectiveEmployee = employee || employees[0]?.id || "";
-
   useEffect(() => {
-    const controller = new AbortController();
-    workflow
-      .employees(controller.signal)
-      .then((items) => {
-        if (!controller.signal.aborted) setEmployees(items);
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted) setError(errorMessage(cause));
-      });
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    if (!month || (role === "EMPLOYEE" && !effectiveEmployee)) return;
+    if (!month) return;
     const controller = new AbortController();
     async function load() {
       setLoading(true);
       setError("");
       try {
-        const session = await workflow.session(role, effectiveEmployee, controller.signal);
-        if (controller.signal.aborted) return;
         const [result, people] = await Promise.all([
-          workflow.rows(session.bearer, month, filter, controller.signal),
-          workflow.roster(session.bearer, controller.signal),
+          workflow.rows(month, filter, controller.signal),
+          role === "EMPLOYEE" ? [] : workflow.roster(controller.signal),
         ]);
         if (controller.signal.aborted) return;
-        setBearer(session.bearer);
         setRows(result);
         setRoster(people);
       } catch (cause) {
@@ -138,14 +126,14 @@ export function TimesheetPage() {
     }
     void load();
     return () => controller.abort();
-  }, [role, effectiveEmployee, month, filter, reload]);
+  }, [role, month, filter, reload]);
 
   useEffect(() => {
-    if (role !== "HR" || !bearer || !month || loading) return;
+    if (role !== "HR" || !month || loading) return;
     const controller = new AbortController();
     const poll = () =>
       void workflow
-        .status(bearer, month, controller.signal)
+        .status(month, controller.signal)
         .then((state) => {
           if (!controller.signal.aborted) setPublication(state);
         })
@@ -156,16 +144,7 @@ export function TimesheetPage() {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [role, bearer, month, loading]);
-
-  function reset() {
-    setBearer("");
-    setRows([]);
-    setRoster([]);
-    setPublication(null);
-    setEdit(null);
-    setError("");
-  }
+  }, [role, month, loading]);
 
   async function operate(action: () => Promise<void>) {
     setOperation(true);
@@ -186,7 +165,7 @@ export function TimesheetPage() {
     const exit = new Date(`${String(data.get("exit"))}:00+07:00`).toISOString();
     const reason = String(data.get("reason")).trim();
     void operate(async () => {
-      await workflow.correct(bearer, edit.employeeId, edit.workDate, exit, reason);
+      await workflow.correct(edit.employeeId, edit.workDate, exit, reason);
       setEdit(null);
       setPublication(null);
       setReload((value) => value + 1);
@@ -195,7 +174,7 @@ export function TimesheetPage() {
 
   function download(type: "csv" | "xlsx") {
     void operate(async () => {
-      const blob = await workflow.export(bearer, month, type);
+      const blob = await workflow.export(month, type);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -206,230 +185,182 @@ export function TimesheetPage() {
   }
 
   return (
-    <DemoPage title="Bảng công theo ngày">
-      <section className="workflow-card workflow-attendance">
-        <div className="workflow-filters">
+    <section className="workflow-card workflow-attendance">
+      <div className="workflow-filters">
+        <label className="workflow-field">
+          Tháng
+          <input
+            type="month"
+            value={month}
+            required
+            disabled={operation}
+            onChange={(event) => {
+              setRows([]);
+              setPublication(null);
+              setEdit(null);
+              setMonth(event.target.value);
+            }}
+          />
+        </label>
+        {role !== "EMPLOYEE" && (
           <label className="workflow-field">
-            Vai trò demo
+            Nhân viên
             <select
-              value={role}
-              disabled={operation}
-              onChange={(event) => {
-                reset();
-                setFilter("");
-                setRole(event.target.value as Role);
-              }}
-            >
-              <option value="EMPLOYEE">Nhân viên</option>
-              <option value="MANAGER">Quản lý</option>
-              <option value="HR">HR</option>
-            </select>
-          </label>
-          {role === "EMPLOYEE" && (
-            <label className="workflow-field">
-              Tài khoản demo
-              <select
-                value={effectiveEmployee}
-                onChange={(event) => {
-                  reset();
-                  setFilter("");
-                  setEmployee(event.target.value);
-                }}
-              >
-                {employees.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {item.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="workflow-field">
-            Tháng
-            <input
-              type="month"
-              value={month}
-              required
+              value={filter}
               disabled={operation}
               onChange={(event) => {
                 setRows([]);
-                setPublication(null);
                 setEdit(null);
-                setMonth(event.target.value);
+                setFilter(event.target.value);
               }}
+            >
+              <option value="">Tất cả trong phạm vi</option>
+              {roster.map((item) => (
+                <option key={item.employeeId} value={item.employeeId}>
+                  {item.employeeName} · {item.employeeId}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          className="workflow-button secondary self-end"
+          disabled={!month || loading || operation}
+          onClick={() => setReload((value) => value + 1)}
+        >
+          <RefreshCw size={16} /> Làm mới
+        </button>
+      </div>
+      {role === "HR" && (
+        <div className="workflow-exports">
+          <div>
+            <strong>Bảng tính cho quản lý</strong>
+            <p>
+              {statusLabels[publication?.status ?? "PENDING"] ?? "Chờ cập nhật"} · Cập nhật lần cuối{" "}
+              {publication?.updatedAt
+                ? new Date(publication.updatedAt).toLocaleString("vi-VN", {
+                    timeZone: businessZone,
+                  })
+                : "—"}
+            </p>
+          </div>
+          <div className="workflow-actions">
+            <button
+              className="workflow-button secondary"
+              disabled={loading || operation || publication?.status !== "SUCCESS"}
+              onClick={() => download("xlsx")}
+            >
+              <Download size={16} /> Tải bảng tính (.xlsx)
+            </button>
+            <button
+              className="workflow-button"
+              disabled={loading || operation || !month}
+              onClick={() => download("csv")}
+            >
+              <Download size={16} /> Xuất CSV cho lương
+            </button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p className="workflow-error" role="alert">
+          {error}
+        </p>
+      )}
+      {edit && (
+        <form key={edit.employeeId + edit.workDate} className="workflow-correction" onSubmit={save}>
+          <h2>
+            Bổ sung giờ ra cho {edit.employeeName} · {dayLabel(edit.workDate)}
+          </h2>
+          <label className="workflow-field">
+            Giờ ra (giờ Việt Nam)
+            <input
+              name="exit"
+              type="datetime-local"
+              required
+              defaultValue={`${edit.workDate}T17:00`}
             />
           </label>
-          {role !== "EMPLOYEE" && (
-            <label className="workflow-field">
-              Nhân viên
-              <select
-                value={filter}
-                disabled={operation}
-                onChange={(event) => {
-                  setRows([]);
-                  setEdit(null);
-                  setFilter(event.target.value);
-                }}
-              >
-                <option value="">Tất cả trong phạm vi</option>
-                {roster.map((item) => (
-                  <option key={item.employeeId} value={item.employeeId}>
-                    {item.employeeName} · {item.employeeId}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <button
-            className="workflow-button secondary self-end"
-            disabled={!month || loading || operation}
-            onClick={() => setReload((value) => value + 1)}
-          >
-            <RefreshCw size={16} /> Làm mới
-          </button>
-        </div>
-        {role === "HR" && (
-          <div className="workflow-exports">
-            <div>
-              <strong>Bảng tính cho quản lý</strong>
-              <p>
-                {statusLabels[publication?.status ?? "PENDING"] ?? "Chờ cập nhật"} · Cập nhật lần
-                cuối{" "}
-                {publication?.updatedAt
-                  ? new Date(publication.updatedAt).toLocaleString("vi-VN", {
-                      timeZone: businessZone,
-                    })
-                  : "—"}
-              </p>
-            </div>
-            <div className="workflow-actions">
-              <button
-                className="workflow-button secondary"
-                disabled={loading || operation || !bearer || publication?.status !== "SUCCESS"}
-                onClick={() => download("xlsx")}
-              >
-                <Download size={16} /> Tải bảng tính (.xlsx)
-              </button>
-              <button
-                className="workflow-button"
-                disabled={loading || operation || !bearer || !month}
-                onClick={() => download("csv")}
-              >
-                <Download size={16} /> Xuất CSV cho lương
-              </button>
-            </div>
+          <label className="workflow-field">
+            Lý do
+            <input name="reason" required maxLength={300} />
+          </label>
+          <div className="workflow-actions">
+            <button className="workflow-button" disabled={operation}>
+              Lưu giờ ra
+            </button>
+            <button
+              type="button"
+              className="workflow-button secondary"
+              disabled={operation}
+              onClick={() => setEdit(null)}
+            >
+              Hủy
+            </button>
           </div>
-        )}
-        {error && (
-          <p className="workflow-error" role="alert">
-            {error}
-          </p>
-        )}
-        {edit && (
-          <form
-            key={edit.employeeId + edit.workDate}
-            className="workflow-correction"
-            onSubmit={save}
-          >
-            <h2>
-              Bổ sung giờ ra cho {edit.employeeName} · {dayLabel(edit.workDate)}
-            </h2>
-            <label className="workflow-field">
-              Giờ ra (giờ Việt Nam)
-              <input
-                name="exit"
-                type="datetime-local"
-                required
-                defaultValue={`${edit.workDate}T17:00`}
-              />
-            </label>
-            <label className="workflow-field">
-              Lý do
-              <input name="reason" required maxLength={300} />
-            </label>
-            <div className="workflow-actions">
-              <button className="workflow-button" disabled={operation}>
-                Lưu giờ ra
-              </button>
-              <button
-                type="button"
-                className="workflow-button secondary"
-                disabled={operation}
-                onClick={() => setEdit(null)}
-              >
-                Hủy
-              </button>
-            </div>
-          </form>
-        )}
-        <div className="workflow-table-wrap">
-          <table className="workflow-table">
-            <thead>
+        </form>
+      )}
+      <div className="workflow-table-wrap">
+        <table className="workflow-table">
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Ngày</th>
+              <th>Giờ vào</th>
+              <th>Giờ ra</th>
+              <th>Tổng giờ</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
               <tr>
-                <th>Nhân viên</th>
-                <th>Ngày</th>
-                <th>Giờ vào</th>
-                <th>Giờ ra</th>
-                <th>Tổng giờ</th>
-                <th>Trạng thái</th>
+                <td colSpan={6}>Đang tải bảng công…</td>
               </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={6}>Đang tải bảng công…</td>
-                </tr>
-              ) : rows.length ? (
-                rows.map((row) => (
-                  <tr
-                    key={row.employeeId + row.workDate}
-                    className={row.reviewFlag ? "exception" : ""}
-                  >
-                    <td>
-                      <strong>{row.employeeName}</strong>
-                      <small>
-                        {row.employeeId} · {row.siteId === "SITE-LA" ? "Long An" : "Bình Dương"}
-                      </small>
-                    </td>
-                    <td>{dayLabel(row.workDate)}</td>
-                    <td>{displayTime(row.firstIn)}</td>
-                    <td>{displayTime(row.lastOut)}</td>
-                    <td>{hours(row.workedMinutes)}</td>
-                    <td>
-                      <span
-                        className={`workflow-pill ${row.status !== "COMPLETE" ? "warning" : ""}`}
+            ) : rows.length ? (
+              rows.map((row) => (
+                <tr
+                  key={row.employeeId + row.workDate}
+                  className={row.reviewFlag ? "exception" : ""}
+                >
+                  <td>
+                    <strong>{row.employeeName}</strong>
+                    <small>
+                      {row.employeeId} · {row.siteId === "SITE-LA" ? "Long An" : "Bình Dương"}
+                    </small>
+                  </td>
+                  <td>{dayLabel(row.workDate)}</td>
+                  <td>{displayTime(row.firstIn)}</td>
+                  <td>{displayTime(row.lastOut)}</td>
+                  <td>{hours(row.workedMinutes)}</td>
+                  <td>
+                    <span className={`workflow-pill ${row.status !== "COMPLETE" ? "warning" : ""}`}>
+                      {labels[row.status]}
+                    </span>
+                    {row.reviewFlag && row.status === "COMPLETE" && <small>Cần HR xác nhận</small>}
+                    {role === "HR" && row.status === "MISSING_EXIT" && (
+                      <button
+                        className="workflow-text-button"
+                        disabled={operation}
+                        onClick={() => setEdit(row)}
                       >
-                        {labels[row.status]}
-                      </span>
-                      {row.reviewFlag && row.status === "COMPLETE" && (
-                        <small>Cần HR xác nhận</small>
-                      )}
-                      {role === "HR" && row.status === "MISSING_EXIT" && (
-                        <button
-                          className="workflow-text-button"
-                          disabled={operation}
-                          onClick={() => setEdit(row)}
-                        >
-                          Sửa công
-                        </button>
-                      )}
-                      <TechnicalRow row={row} bearer={bearer} />
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6}>
-                    {month
-                      ? "Chưa có dữ liệu công cho bộ lọc này."
-                      : "Chọn tháng để xem bảng công."}
+                        Sửa công
+                      </button>
+                    )}
+                    <TechnicalRow row={row} />
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </DemoPage>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={6}>
+                  {month ? "Chưa có dữ liệu công cho bộ lọc này." : "Chọn tháng để xem bảng công."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

@@ -1,94 +1,78 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Camera, Check, ImageUp, ScanLine, X } from "lucide-react";
-import { configuredEdges } from "../../shared/config/edges";
+import { ApiRequestError } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
 import { tokenFromQrLink } from "../../shared/lib/qr-link";
-import { DemoPage } from "../../shared/ui/DemoPage";
-import { displayTime, groupLabel, workflow, type Station } from "../../shared/workflow";
+import { AppPage } from "../../shared/ui/AppPage";
+import { RequireAccount } from "../../shared/ui/Auth";
+import { displayTime, workflow, type Station } from "../../shared/workflow";
 import { accessApi } from "../api/access-api";
 import { scanEventId } from "../lib/scan-event-id";
 import { parseScanToken } from "../lib/scan-token";
 import { readQrFile } from "../lib/read-qr";
-import type { VerifyResult } from "../model/types";
+import type { VerifyPayload, VerifyResult } from "../model/types";
 import { QrCamera } from "./QrCamera";
 
-type Gate = Station & { base: string; key: string };
-type Scan = { result: VerifyResult; gate: Gate; at: string };
 const reasons: Record<string, string> = {
   TOKEN_EXPIRED: "Mã QR đã hết hạn. Hãy quét mã mới.",
-  CLOCK_SKEW: "Giờ trên thiết bị quét bị lệch. Hãy bật ngày giờ tự động rồi quét lại.",
-  REPLAY: "Mã QR đã được dùng",
-  REVOKED: "Thẻ đã bị thu hồi",
-  CVER_MISMATCH: "Mã cũ. Hãy mở mã QR mới",
-  DEVICE_MISMATCH: "Thiết bị không khớp",
-  ANTI_PASSBACK: "Trạng thái vào/ra không hợp lệ",
-  ZONE_DENIED: "Bạn không có quyền vào khu vực này",
-  OUTSIDE_SHIFT: "Ngoài khung giờ được vào",
-  EMPLOYEE_INACTIVE: "Tài khoản chưa hoạt động",
-  STATION_SCOPE: "Bạn không thuộc nhà máy này",
-  STATION_AUTH_FAILED: "Cổng chưa sẵn sàng",
-  INVALID_TOKEN: "Mã QR không hợp lệ",
+  REPLAY: "Mã QR này đã được sử dụng.",
+  REVOKED: "Thẻ đã bị thu hồi.",
+  CVER_MISMATCH: "Mã đã thay đổi. Hãy mở mã QR mới.",
+  DEVICE_MISMATCH: "Mã QR không khớp với thẻ nhân viên.",
+  ZONE_DENIED: "Nhân viên không có quyền vào khu vực.",
+  OUTSIDE_SHIFT: "Lượt quét ngoài khung giờ quy định.",
+  EMPLOYEE_INACTIVE: "Tài khoản chưa hoạt động.",
+  STATION_SCOPE: "Nhân viên không thuộc nhà máy này.",
+  STATION_AUTH_FAILED: "Trạm quét hiện không hoạt động.",
+  INVALID_TOKEN: "Mã QR không hợp lệ.",
 };
 
-function scanLabel({ result, gate }: Scan) {
-  const entry = gate.gate.directions[0] !== "EXIT";
+type Pending = { id: string; payload?: VerifyPayload };
+
+function scanLabel(result: VerifyResult, direction: "ENTRY" | "EXIT") {
   if (result.decision !== "ALLOW") {
-    if (result.reasonCode === "ANTI_PASSBACK")
-      return entry ? "Bạn đã vào và chưa quét ra" : "Chưa có lượt vào phù hợp";
-    return reasons[result.reasonCode ?? ""] ?? "Chưa thể xác nhận. Vui lòng gặp bảo vệ.";
+    if (result.reasonCode === "ANTI_PASSBACK") {
+      return direction === "ENTRY"
+        ? "Đã có giờ vào. Cần quét ra trước."
+        : "Chưa có lượt vào phù hợp.";
+    }
+    return (
+      reasons[result.reasonCode ?? ""] ??
+      "Lượt quét bị từ chối. Liên hệ quản trị viên nếu cần hỗ trợ."
+    );
   }
-  if (result.command !== "ACKED") return "Chưa mở được cổng. Vui lòng gặp bảo vệ.";
-  const name = result.employeeName ? `Xin chào ${result.employeeName}` : "Đã xác minh";
-  if (result.attendanceGate === false) return `${name}, được phép vào khu vực`;
-  return entry
-    ? `${name}, đã ghi nhận giờ vào ${displayTime(result.scannedAt ?? null)}`
-    : `Đã ghi nhận giờ ra ${displayTime(result.scannedAt ?? null)}`;
+  if (result.command !== "ACKED") return "Chưa thể ghi nhận lượt quét.";
+  if (result.attendanceGate === false)
+    return `${result.employeeName ?? "Nhân viên"} được phép vào khu vực`;
+  const time = displayTime(result.scannedAt ?? null);
+  return `${result.employeeName ?? "Nhân viên"} · Đã ghi nhận giờ ${direction === "ENTRY" ? "vào" : "ra"} ${time}`;
+}
+
+function lastPending(key: string): Pending | null {
+  try {
+    const id = window.sessionStorage.getItem(key);
+    return id ? { id } : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePending(key: string, id?: string) {
+  try {
+    if (id) window.sessionStorage.setItem(key, id);
+    else window.sessionStorage.removeItem(key);
+  } catch {
+    /* The active tab can still retry without browser storage. */
+  }
 }
 
 export function GatePage() {
-  const [gates, setGates] = useState<Gate[]>([]);
-  const [selection, setSelection] = useState("");
-  const [camera, setCamera] = useState(false);
   const [linkedCode, setLinkedCode] = useState("");
-  const [raw, setRaw] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<Scan | null>(null);
-  const [history, setHistory] = useState<Scan[]>([]);
-  const scanning = useRef(false);
-  const lastCameraCode = useRef("");
-  const gate = gates.find((item) => item.key === selection) ?? gates[0];
-  const canStream =
-    !gate || Boolean(globalThis.isSecureContext && navigator.mediaDevices?.getUserMedia);
-  useEffect(() => {
-    const controller = new AbortController();
-    const urls = Array.from(new Set(configuredEdges().map((edge) => edge.url)));
-    void Promise.allSettled(
-      urls.map(async (base) =>
-        (await workflow.gates(base, controller.signal)).map((item) => ({
-          ...item,
-          base,
-          key: `${base}/${item.stationId}`,
-        })),
-      ),
-    ).then((responses) => {
-      if (controller.signal.aborted) return;
-      const items = responses.flatMap((response) =>
-        response.status === "fulfilled" ? response.value : [],
-      );
-      setGates(items);
-      if (!items.length) setError("Không tải được danh sách cổng.");
-    });
-    return () => controller.abort();
-  }, []);
   useEffect(() => {
     function readLink() {
       const code = tokenFromQrLink(window.location.href);
       if (!code) return;
       setLinkedCode(code);
-      setCamera(false);
-      setResult(null);
-      setError("");
       window.history.replaceState(
         window.history.state,
         "",
@@ -99,43 +83,210 @@ export function GatePage() {
     window.addEventListener("hashchange", readLink);
     return () => window.removeEventListener("hashchange", readLink);
   }, []);
+  return (
+    <AppPage title="Trạm quét">
+      <RequireAccount roles={["GUARD"]}>
+        {(account) => (
+          <AssignedStation
+            key={account.username}
+            username={account.username}
+            linkedCode={linkedCode}
+            clearLink={() => setLinkedCode("")}
+          />
+        )}
+      </RequireAccount>
+    </AppPage>
+  );
+}
+
+function AssignedStation({
+  username,
+  linkedCode,
+  clearLink,
+}: {
+  username: string;
+  linkedCode: string;
+  clearLink: () => void;
+}) {
+  const [station, setStation] = useState<Station | null>(null);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
-    if (!result || !camera) return;
-    const timer = window.setTimeout(() => setResult(null), 4500);
-    return () => window.clearTimeout(timer);
-  }, [result, camera]);
+    const controller = new AbortController();
+    void workflow
+      .station(controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setStation(value);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
+    return () => controller.abort();
+  }, [revision]);
+  if (error)
+    return (
+      <section className="workflow-card workflow-login">
+        <p className="workflow-error" role="alert">
+          {error}
+        </p>
+        <button
+          className="workflow-button"
+          onClick={() => {
+            setError("");
+            setRevision((value) => value + 1);
+          }}
+        >
+          Thử lại
+        </button>
+      </section>
+    );
+  if (!station) return <p role="status">Đang tải trạm được giao…</p>;
+  return (
+    <StationScanner
+      key={station.stationId}
+      station={station}
+      linkedCode={linkedCode}
+      clearLink={clearLink}
+      storageKey={`tmc.pending.${username}.${station.stationId}`}
+    />
+  );
+}
+
+function StationScanner({
+  station,
+  linkedCode,
+  clearLink,
+  storageKey,
+}: {
+  station: Station;
+  linkedCode: string;
+  clearLink: () => void;
+  storageKey: string;
+}) {
+  const [pending, setPending] = useState<Pending | null>(() => lastPending(storageKey));
+  const [camera, setCamera] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [wait, setWait] = useState("");
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<VerifyResult | null>(null);
+  const [history, setHistory] = useState<VerifyResult[]>([]);
+  const busy = useRef(false);
+  const lastCameraCode = useRef("");
+  const retry = useRef<(() => void) | null>(null);
+  const direction = station.gate.directions[0] ?? "ENTRY";
+  const canStream = Boolean(globalThis.isSecureContext && navigator.mediaDevices?.getUserMedia);
+  const good = result?.decision === "ALLOW" && result.command === "ACKED";
+
+  useEffect(() => {
+    if (!pending) return;
+    const event = pending;
+    const controller = new AbortController();
+    let timer = 0;
+    let inFlight = false;
+    let retries = 0;
+    let missing = 0;
+    const interrupted = () =>
+      setWait("Mất kết nối. Đang giữ lượt quét để kiểm tra lại khi có mạng.");
+    function schedule() {
+      if (controller.signal.aborted) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(send, Math.min(2000 * 2 ** Math.min(retries++, 3), 10_000));
+    }
+    function finish() {
+      savePending(storageKey);
+      setPending(null);
+      setWait("");
+    }
+    async function send() {
+      if (inFlight || controller.signal.aborted) return;
+      window.clearTimeout(timer);
+      if (!navigator.onLine) {
+        interrupted();
+        return;
+      }
+      inFlight = true;
+      setWait("Đang đối chiếu với máy chủ…");
+      try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(6000)]);
+        const response = event.payload
+          ? await accessApi.verify(event.payload, station.stationId, signal)
+          : await accessApi.result(event.id, station.stationId, signal);
+        if (controller.signal.aborted) return;
+        if (response.command === "SENT" || response.command === "UNKNOWN") {
+          setWait("Máy chủ đã nhận lượt quét. Đang chờ kết quả.");
+          schedule();
+          return;
+        }
+        setResult(response);
+        setHistory((previous) =>
+          [response, ...previous.filter((item) => item.eventId !== response.eventId)].slice(0, 5),
+        );
+        finish();
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        if (cause instanceof ApiRequestError && !cause.retryable) {
+          if (cause.status === 401) return; // The account form takes over; keep the event ID for recovery.
+          if (!event.payload && cause.status === 404 && ++missing < 3) {
+            schedule();
+            return;
+          }
+          setError(
+            cause.status === 404
+              ? "Máy chủ chưa có kết quả cho lượt quét này. Kiểm tra kết nối rồi quét mã mới."
+              : errorMessage(cause),
+          );
+          finish();
+        } else {
+          setWait(
+            cause instanceof ApiRequestError && cause.code === "REQUEST_IN_PROGRESS"
+              ? "Máy chủ đang xử lý lượt này. Đang chờ kết quả."
+              : "Chưa nhận được phản hồi. Hệ thống sẽ thử lại cùng lượt quét.",
+          );
+          schedule();
+        }
+      } finally {
+        inFlight = false;
+      }
+    }
+    retry.current = () => void send();
+    window.addEventListener("online", send);
+    window.addEventListener("offline", interrupted);
+    void send();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      retry.current = null;
+      window.removeEventListener("online", send);
+      window.removeEventListener("offline", interrupted);
+    };
+  }, [pending, station.stationId, storageKey]);
 
   async function scan(read: () => string | undefined | Promise<string | undefined>) {
-    if (!gate || scanning.current) return;
-    scanning.current = true;
-    setBusy(true);
+    if (busy.current || pending) return;
+    busy.current = true;
+    setReading(true);
     setError("");
     setResult(null);
     try {
       const code = await read();
-      if (!code) throw new Error("Không thấy mã QR. Hãy chụp gần hơn và lấy trọn mã trong ảnh.");
+      if (!code) throw new Error("Không thấy mã QR. Hãy chụp rõ toàn bộ mã.");
       const { token, deviceId } = parseScanToken(code);
-      const scannedAt = new Date().toISOString();
-      const verdict = await accessApi.verify(
-        {
-          eventId: scanEventId(),
-          siteId: gate.siteId,
-          direction: gate.gate.directions[0] ?? "ENTRY",
-          scannedAt,
-          token,
-          deviceId,
-        },
-        gate.stationId,
-        gate.base,
-      );
-      const entry = { gate, result: verdict, at: scannedAt };
-      setResult(entry);
-      setHistory((previous) => [entry, ...previous].slice(0, 5));
+      const eventId = scanEventId();
+      const payload = {
+        eventId,
+        token,
+        deviceId,
+        siteId: station.siteId,
+        direction,
+        scannedAt: new Date().toISOString(),
+      };
+      savePending(storageKey, eventId);
+      setPending({ id: eventId, payload });
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      scanning.current = false;
-      setBusy(false);
+      setReading(false);
+      busy.current = false;
     }
   }
 
@@ -145,135 +296,112 @@ export function GatePage() {
     if (file) void scan(() => readQrFile(file));
   }
 
-  const zone = gate?.gate.type === "ZONE_GATE";
-  const good = result?.result.decision === "ALLOW" && result.result.command === "ACKED";
-  const latest = history.find((scan) => scan.gate.key === gate?.key)?.result;
   return (
-    <DemoPage title="Kiosk cổng">
-      <div className="workflow-gate-grid">
-        <section className="workflow-card workflow-gate">
-          <label className="workflow-field">
-            Chọn cổng
-            <select
-              disabled={!gate || busy}
-              value={gate?.key ?? ""}
-              onChange={(event) => {
-                setSelection(event.target.value);
+    <div className="workflow-gate-grid">
+      <section className="workflow-card workflow-gate">
+        <div className="workflow-gate-heading">
+          <strong>{station.gate.name}</strong>
+          <p>
+            {station.stationId} · {station.siteId}
+          </p>
+        </div>
+        {camera && (
+          <div className="workflow-camera">
+            <QrCamera
+              paused={Boolean(pending || reading || linkedCode)}
+              ignoreCode={(code) => code === lastCameraCode.current}
+              onDecode={(code) => {
+                lastCameraCode.current = code;
+                void scan(() => code);
+              }}
+              onFailure={(message) => {
+                setCamera(false);
+                setError(message);
+              }}
+            />
+          </div>
+        )}
+        <div
+          className={`workflow-scan${camera ? " with-camera" : ""}${result && !pending ? (good ? " accepted" : " rejected") : ""}`}
+          role="status"
+        >
+          {pending ? (
+            <>
+              <ScanLine size={38} />
+              <strong>Lượt quét đang chờ</strong>
+              <p>{wait}</p>
+              <p>Mã lượt {pending.id}</p>
+            </>
+          ) : result && !linkedCode ? (
+            <>
+              {good ? <Check size={46} /> : <X size={46} />}
+              <strong>{scanLabel(result, direction)}</strong>
+            </>
+          ) : (
+            <>
+              <ScanLine size={45} />
+              <strong>
+                {reading
+                  ? "Đang đọc mã…"
+                  : linkedCode
+                    ? "Đã đọc mã QR"
+                    : camera
+                      ? "Đưa mã QR vào khung hình"
+                      : "Sẵn sàng quét QR"}
+              </strong>
+              {linkedCode && <p>Xác nhận lượt quét tại trạm được giao.</p>}
+            </>
+          )}
+        </div>
+        {error && (
+          <p role="alert" className="workflow-error">
+            {error}
+          </p>
+        )}
+        <div className="workflow-actions">
+          {pending ? (
+            <button className="workflow-button" onClick={() => retry.current?.()}>
+              Thử lại lượt quét
+            </button>
+          ) : linkedCode ? (
+            <button
+              className="workflow-button"
+              disabled={reading}
+              onClick={() => {
+                clearLink();
+                void scan(() => linkedCode);
+              }}
+            >
+              <Check size={18} /> Xác nhận quét
+            </button>
+          ) : canStream ? (
+            <button
+              className="workflow-button"
+              disabled={reading}
+              onClick={() => {
+                lastCameraCode.current = "";
+                setCamera(!camera);
                 setResult(null);
                 setError("");
               }}
             >
-              {!gate && <option value="">Đang tải cổng…</option>}
-              {gates.map((item) => (
-                <option value={item.key} key={item.key}>
-                  {item.gate.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="workflow-gate-heading">
-            <strong>
-              {zone ? "CỔNG KHU VỰC" : gate?.gate.directions[0] === "EXIT" ? "CỔNG RA" : "CỔNG VÀO"}
-            </strong>
-            {gate && (
-              <p>
-                {zone
-                  ? "Quyền vào · " +
-                    gate.gate.allowedGroups.map((group) => groupLabel[group]).join(", ")
-                  : "Ghi nhận giờ chấm công"}
-              </p>
-            )}
-          </div>
-          {camera && (
-            <div className="workflow-camera">
-              <QrCamera
-                paused={busy}
-                ignoreCode={(code) => code === lastCameraCode.current}
-                onDecode={(code) => {
-                  if (scanning.current) return;
-                  lastCameraCode.current = code;
-                  void scan(() => code);
-                }}
-                onFailure={(message) => {
-                  setCamera(false);
-                  setError(message);
-                }}
+              <Camera size={18} /> {camera ? "Tắt camera" : "Mở camera"}
+            </button>
+          ) : (
+            <label className="workflow-button relative">
+              <Camera size={18} /> Chụp mã QR
+              <input
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                aria-label="Chụp mã QR"
+                disabled={reading}
+                onChange={scanImage}
               />
-            </div>
+            </label>
           )}
-          <div
-            className={`workflow-scan${camera ? " with-camera" : ""}${result ? (good ? " accepted" : " rejected") : ""}`}
-            role="status"
-          >
-            {result ? (
-              <>
-                {good ? <Check size={46} /> : <X size={46} />}
-                <strong>{scanLabel(result)}</strong>
-              </>
-            ) : (
-              <>
-                <ScanLine size={45} />
-                <strong>
-                  {busy
-                    ? "Đang xác minh…"
-                    : linkedCode
-                      ? "Đã đọc mã QR"
-                      : camera
-                        ? "Đưa mã QR vào khung hình"
-                        : "Sẵn sàng quét QR"}
-                </strong>
-                {!busy && !camera && (
-                  <p>
-                    {linkedCode
-                      ? "Kiểm tra cổng đã chọn rồi xác nhận lượt quét."
-                      : canStream
-                        ? "Mở camera hoặc chọn ảnh QR của nhân viên."
-                        : "Chụp hoặc chọn ảnh QR của nhân viên."}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-          <div className="workflow-actions">
-            {linkedCode ? (
-              <button
-                className="workflow-button"
-                disabled={!gate || busy}
-                onClick={() => {
-                  setLinkedCode("");
-                  void scan(() => linkedCode);
-                }}
-              >
-                <Check size={18} /> Xác nhận quét
-              </button>
-            ) : canStream ? (
-              <button
-                className="workflow-button"
-                disabled={!gate || busy}
-                onClick={() => {
-                  lastCameraCode.current = "";
-                  setCamera(!camera);
-                  setResult(null);
-                  setError("");
-                }}
-              >
-                <Camera size={18} />
-                {camera ? "Tắt camera" : "Mở camera"}
-              </button>
-            ) : (
-              <label className="workflow-button relative">
-                <Camera size={18} /> Chụp mã QR
-                <input
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  aria-label="Chụp mã QR"
-                  disabled={!gate || busy}
-                  onChange={scanImage}
-                />
-              </label>
-            )}
+          {!pending && !linkedCode && (
             <label className="workflow-button secondary relative">
               <ImageUp size={18} /> Chọn ảnh QR
               <input
@@ -281,76 +409,28 @@ export function GatePage() {
                 type="file"
                 accept="image/*"
                 aria-label="Chọn ảnh QR"
-                disabled={!gate || busy}
+                disabled={reading}
                 onChange={scanImage}
               />
             </label>
-          </div>
-          {error && (
-            <p role="alert" className="workflow-error">
-              {error}
-            </p>
           )}
-          <details className="workflow-technical">
-            <summary>Chi tiết kỹ thuật</summary>
-            {gate && (
-              <p>
-                {gate.siteId} / {gate.stationId}
-              </p>
-            )}
-            {latest && (
-              <>
-                <p>
-                  {latest.decision} · {latest.reasonCode ?? latest.command} ·{" "}
-                  {latest.evidence ?? "—"}
-                </p>
-                <p>Event ID {latest.eventId}</p>
-                <ul>
-                  {latest.steps?.map((step, index) => (
-                    <li key={`${step}-${index}`}>{step}</li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <details className="workflow-technical">
-              <summary>Nhập token thủ công (chỉ để test)</summary>
-              <form
-                className="grid gap-3 pt-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void scan(() => raw);
-                }}
-              >
-                <label className="workflow-field">
-                  Token QR
-                  <textarea value={raw} onChange={(event) => setRaw(event.target.value)} required />
-                </label>
-                <button className="workflow-button secondary" disabled={!gate || busy}>
-                  Xác minh
-                </button>
-              </form>
-            </details>
-          </details>
-        </section>
-        <aside className="workflow-card workflow-history">
-          <h2>5 lượt quét gần nhất</h2>
-          {history.length ? (
-            <ol>
-              {history.map((item) => (
-                <li key={item.result.eventId}>
-                  <time dateTime={item.at}>{displayTime(item.at)}</time>
-                  <div>
-                    <strong>{scanLabel(item)}</strong>
-                    <p>{item.gate.gate.name}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>Chưa có lượt quét.</p>
-          )}
-        </aside>
-      </div>
-    </DemoPage>
+        </div>
+      </section>
+      <aside className="workflow-card workflow-history">
+        <h2>Lượt quét gần đây</h2>
+        {history.length ? (
+          <ol>
+            {history.map((item) => (
+              <li key={item.eventId}>
+                <time dateTime={item.scannedAt}>{displayTime(item.scannedAt ?? null)}</time>
+                <strong>{scanLabel(item, direction)}</strong>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>Chưa có lượt quét trong phiên này.</p>
+        )}
+      </aside>
+    </div>
   );
 }

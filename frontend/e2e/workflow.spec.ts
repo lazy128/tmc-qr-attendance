@@ -1,224 +1,181 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { randomBytes } from "node:crypto";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import jsQR from "jsqr";
 
 const base = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173";
-const lanBase = process.env.PLAYWRIGHT_LAN_BASE_URL;
-const screenshots = process.env.E2E_WORKFLOW_SCREENSHOTS;
+const api = base + "/edge-api";
 const browser = process.env.PLAYWRIGHT_CHROME_PATH;
+const adminPassword = process.env.E2E_ADMIN_PASSWORD;
 if (browser) test.use({ launchOptions: { executablePath: browser } });
 
-test("serves the TMC favicon and no longer serves the legacy console", async ({
-  page,
-  request,
-}) => {
-  await page.goto(base + "/");
-  const icon = page.locator('link[rel="icon"]');
-  await expect(icon).toHaveAttribute("href", "/tmc-icon.svg");
-  const favicon = await request.get(base + "/tmc-icon.svg");
-  expect(favicon.ok()).toBe(true);
-  expect(favicon.headers()["content-type"]).toContain("image/svg+xml");
-  const removed = await page.goto(base + "/technical");
-  expect(removed?.status()).toBe(404);
-  await expect(page.getByRole("heading", { name: "Không tìm thấy trang" })).toBeVisible();
+test("serves the TMC favicon and keeps private areas behind sign-in", async ({ page, request }) => {
+  await page.goto(base + "/employee");
+  await expect(page.getByRole("heading", { name: "Đăng nhập" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Mã QR truy cập" })).toHaveCount(0);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/tmc-icon.svg");
+  expect((await request.get(base + "/tmc-icon.svg")).ok()).toBe(true);
 });
 
-async function capture(page: Page, name: string) {
-  if (!screenshots) return;
-  await mkdir(screenshots, { recursive: true });
-  await page.screenshot({ path: join(screenshots, name), animations: "disabled", fullPage: true });
+async function login(request: APIRequestContext, username: string, password: string) {
+  const response = await request.post(api + "/auth/v1/login", { data: { username, password } });
+  return response;
 }
 
-test("employee QR is scanned by the kiosk camera and phone capture, then appears on HR's daily sheet", async ({
-  page,
-  context,
-}) => {
-  test.setTimeout(90_000);
-  const personal = await context.newPage();
-  await personal.setViewportSize({ width: 420, height: 880 });
-  await personal.goto(base + "/employee");
-  await expect(personal.getByRole("heading", { name: "Nguyễn Văn An" })).toBeVisible();
-  const canvas = personal.getByRole("img", { name: "Mã QR truy cập" });
-
-  async function newQr() {
-    await personal.reload();
-    await expect(canvas).toBeVisible();
-    await expect
-      .poll(() =>
-        canvas.evaluate(
-          (el: HTMLCanvasElement) => el.width > 300 && el.style.width === `${el.clientWidth}px`,
-        ),
-      )
-      .toBe(true);
-    return canvas.screenshot();
-  }
-
-  await page.addInitScript(() => {
-    const frame = document.createElement("canvas");
-    frame.width = 480;
-    frame.height = 360;
-    const context = frame.getContext("2d")!;
-    let image: HTMLImageElement | undefined;
-    window.addEventListener("test-camera-frame", (event) => {
-      image = (event as CustomEvent<HTMLImageElement>).detail;
-    });
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-      value: async () => {
-        const stream = frame.captureStream(0);
-        const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-        const timer = setInterval(() => {
-          if (track.readyState !== "live") {
-            clearInterval(timer);
-            return;
-          }
-          track.requestFrame();
-          context.fillStyle = "#39434a";
-          context.fillRect(0, 0, frame.width, frame.height);
-          if (image) context.drawImage(image, 60, 20);
-        }, 66);
-        return stream;
-      },
-    });
+async function activate(request: APIRequestContext, username: string, password: string) {
+  const initial = await login(request, username, password);
+  expect(initial.status()).toBe(200);
+  if (!(await initial.json()).changeRequired) return;
+  const replacement = password + "-updated";
+  const change = await request.post(api + "/auth/v1/password", {
+    data: { current: password, replacement },
   });
-  await page.goto(base + "/gate");
-  const gates = page.getByLabel("Chọn cổng");
-  await gates.selectOption({ label: "Bình Dương – Cổng vào 1" });
+  expect(change.status()).toBe(204);
+  expect((await login(request, username, replacement)).status()).toBe(200);
+}
+
+async function signIn(page: Page, username: string, password: string) {
+  await page.getByLabel("Tên đăng nhập").fill(username);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+}
+
+async function createAccount(request: APIRequestContext, data: Record<string, string>) {
+  const created = await request.post(api + "/workplace/v1/accounts", { data });
+  expect(created.status()).toBe(201);
+}
+
+async function qrCanvas(page: Page) {
+  const canvas = page.getByRole("img", { name: "Mã QR truy cập" });
   await expect(canvas).toBeVisible();
-  if (await personal.getByText("Đã ghi nhận giờ vào").count()) {
-    await gates.selectOption({ label: "Bình Dương – Cổng ra 1" });
-    await page.getByLabel("Chọn ảnh QR").setInputFiles({
-      name: "pass.png",
-      mimeType: "image/png",
-      buffer: await newQr(),
-    });
-    await expect(page.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
-    await gates.selectOption({ label: "Bình Dương – Cổng vào 1" });
-  }
-  const qr = await newQr();
-  await page.bringToFront();
-  await page.getByRole("button", { name: "Mở camera" }).click();
-  const video = page.getByLabel("Camera quét QR");
-  await page.evaluate(
-    async (src) => {
-      const image = new Image();
-      image.src = src;
-      await image.decode();
-      window.dispatchEvent(new CustomEvent("test-camera-frame", { detail: image }));
-    },
-    `data:image/png;base64,${qr.toString("base64")}`,
-  );
-  await expect(page.getByRole("status")).toContainText(
-    "Xin chào Nguyễn Văn An, đã ghi nhận giờ vào",
-  );
-  await expect(video).toBeVisible();
-  await expect.poll(() => video.evaluate((el: HTMLVideoElement) => el.videoWidth)).toBe(480);
-  await capture(page, "02-kiosk.png");
-  await page.getByRole("button", { name: "Tắt camera" }).click();
-  await expect(video).toHaveCount(0);
-  await expect(personal.getByRole("status")).toContainText("Đã ghi nhận giờ vào");
-  await capture(personal, "01-nhan-vien.png");
+  await expect
+    .poll(() =>
+      canvas.evaluate(
+        (el: HTMLCanvasElement) => el.width > 300 && el.style.width === `${el.clientWidth}px`,
+      ),
+    )
+    .toBe(true);
+  return canvas;
+}
 
-  const phoneKiosk = await context.newPage();
-  await phoneKiosk.setViewportSize({ width: 390, height: 844 });
-  if (!lanBase) {
-    await phoneKiosk.addInitScript(() => {
-      Object.defineProperty(window, "isSecureContext", { value: false });
-    });
-  }
-  await phoneKiosk.goto((lanBase ?? base) + "/gate");
-  await phoneKiosk.getByLabel("Chọn cổng").selectOption({ label: "Bình Dương – Cổng ra 1" });
-  const photo = phoneKiosk.getByLabel("Chụp mã QR");
-  await expect(photo).toHaveAttribute("capture", "environment");
-  await photo.setInputFiles({ name: "pass.png", mimeType: "image/png", buffer: await newQr() });
-  await expect(phoneKiosk.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
-  await expect(personal.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
-
-  await page.goto(base + "/attendance");
-  // At the default 06:00 Vietnam cutoff the work date is UTC+1's calendar date.
-  const workDay = new Date(Date.now() + 3_600_000)
-    .toISOString()
-    .slice(0, 10)
-    .split("-")
-    .reverse()
-    .join("/");
-  const today = page
-    .getByRole("row")
-    .filter({ hasText: "Nguyễn Văn An" })
-    .filter({ hasText: workDay });
-  await expect(async () => {
-    await page.getByRole("button", { name: "Làm mới" }).click({ timeout: 2500 });
-    await expect(today.getByRole("cell").nth(2)).toHaveText(/^\d\d:\d\d$/, { timeout: 1500 });
-    await expect(today.getByRole("cell").nth(3)).toHaveText(/^\d\d:\d\d$/, { timeout: 1500 });
-  }).toPass({ timeout: 15000 });
-  await expect(page.getByRole("row").filter({ hasText: "Thiếu giờ ra" })).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "Trùng lượt" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Tải bảng tính (.xlsx)" })).toBeEnabled({
-    timeout: 30000,
-  });
-  await capture(page, "03-bang-cong.png");
-  await page.getByLabel("Vai trò demo").selectOption("EMPLOYEE");
-  await expect(page.getByRole("row").filter({ hasText: "Nguyễn Văn An" }).first()).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "Trần Thị Mai" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Xuất CSV cho lương" })).toHaveCount(0);
-});
-
-test("opening the QR link confirms entry on both the phone and the employee page", async ({
-  page,
-  context,
+test("associates QR with login, retries an ambiguous scan and displays the persisted timesheet", async ({
+  browser,
 }) => {
-  test.skip(!lanBase, "Configure the LAN address as the QR scan origin to test phone links.");
-  test.setTimeout(60_000);
-  const phone = await context.newPage();
-  await phone.setViewportSize({ width: 390, height: 844 });
-  const employeeStatus = page.getByRole("status");
+  test.skip(!adminPassword, "Set E2E_ADMIN_PASSWORD for a workplace test database.");
+  test.setTimeout(120_000);
+  const suffix = randomBytes(3).toString("hex");
+  const password = "Initial-" + randomBytes(8).toString("hex");
+  const employeeName = "Nguyễn Kiểm Thử";
+  const employeeId = "NV-" + suffix.toUpperCase();
+  const admin = await browser.newContext();
+  const entry = await browser.newContext();
+  const exit = await browser.newContext();
+  const employee = await browser.newContext({ viewport: { width: 420, height: 880 } });
+  const hr = await browser.newContext();
+  try {
+    const adminPage = await admin.newPage();
+    const adminName = process.env.E2E_ADMIN_USERNAME ?? "admin";
+    const existing = await login(admin.request, adminName, adminPassword! + "-updated");
+    if (existing.status() === 401) await activate(admin.request, adminName, adminPassword!);
+    await adminPage.goto(base + "/stations");
+    await expect(adminPage.getByRole("heading", { name: "Danh sách tài khoản" })).toBeVisible();
+    await adminPage.getByLabel("Tên đăng nhập").fill("employee-" + suffix);
+    await adminPage.getByLabel("Mật khẩu tạm").fill(password);
+    await adminPage.getByLabel("Mã nhân viên").fill(employeeId);
+    await adminPage.getByLabel("Họ tên").fill(employeeName);
+    await adminPage.getByLabel("Bộ phận").fill("SAN-XUAT");
+    await adminPage.getByRole("button", { name: "Tạo tài khoản" }).click();
+    await expect(adminPage.getByRole("row").filter({ hasText: employeeId })).toContainText(
+      "Chờ đổi mật khẩu",
+    );
 
-  async function openEmployeeQr() {
-    await page.goto(base + "/employee");
-    await page.getByLabel("Tài khoản demo").selectOption("NV003");
-    const canvas = page.getByRole("img", { name: "Mã QR truy cập" });
-    await expect
-      .poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width))
-      .toBeGreaterThan(300);
-    const { width, encoded } = await canvas.evaluate((el: HTMLCanvasElement) => {
-      const rgba = el.getContext("2d")!.getImageData(0, 0, el.width, el.height).data;
+    await createAccount(admin.request, {
+      username: "entry-" + suffix,
+      role: "GUARD",
+      stationId: "BD-G01",
+      password,
+    });
+    await createAccount(admin.request, {
+      username: "exit-" + suffix,
+      role: "GUARD",
+      stationId: "BD-G01-OUT",
+      password,
+    });
+    await createAccount(admin.request, { username: "hr-" + suffix, role: "HR", password });
+    await Promise.all([
+      activate(entry.request, "entry-" + suffix, password),
+      activate(exit.request, "exit-" + suffix, password),
+      activate(hr.request, "hr-" + suffix, password),
+    ]);
+
+    const person = await employee.newPage();
+    await person.goto(base + "/employee");
+    await signIn(person, "employee-" + suffix, password);
+    await expect(person.getByRole("heading", { name: "Đổi mật khẩu" })).toBeVisible();
+    await person.getByLabel("Mật khẩu hiện tại").fill(password);
+    await person.getByLabel("Mật khẩu mới", { exact: true }).fill(password + "-updated");
+    await person.getByLabel("Nhập lại mật khẩu mới").fill(password + "-updated");
+    await person.getByRole("button", { name: "Lưu mật khẩu" }).click();
+    await signIn(person, "employee-" + suffix, password + "-updated");
+    await expect(person.getByRole("heading", { name: employeeName })).toBeVisible();
+    await expect(person.getByRole("combobox")).toHaveCount(0);
+    await expect(person.getByRole("status")).toContainText("Chưa vào");
+
+    const scanner = await entry.newPage();
+    await scanner.goto(base + "/gate");
+    await expect(scanner.getByText("Bình Dương – Cổng vào 1")).toBeVisible();
+    const requests: string[] = [];
+    await scanner.route("**/access/v1/verify", async (route) => {
+      requests.push(route.request().postData() ?? "");
+      if (requests.length !== 1) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      await route.abort("failed");
+    });
+    await scanner.getByLabel("Chọn ảnh QR").setInputFiles({
+      name: "qr.png",
+      mimeType: "image/png",
+      buffer: await (await qrCanvas(person)).screenshot(),
+    });
+    await expect(scanner.getByRole("status")).toContainText("Chưa nhận được phản hồi");
+    await scanner.getByRole("button", { name: "Thử lại lượt quét" }).click();
+    await expect(scanner.getByRole("status")).toContainText("Đã ghi nhận giờ vào");
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(requests).size).toBe(1);
+    await expect(person.getByRole("status")).toContainText("Đã ghi nhận giờ vào");
+
+    await person.reload();
+    const qr = await qrCanvas(person);
+    const { width, encoded } = await qr.evaluate((element: HTMLCanvasElement) => {
+      const rgba = element.getContext("2d")!.getImageData(0, 0, element.width, element.height).data;
       let bytes = "";
       for (let offset = 0; offset < rgba.length; offset += 32768) {
         bytes += String.fromCharCode(...rgba.subarray(offset, offset + 32768));
       }
-      return { width: el.width, encoded: btoa(bytes) };
+      return { width: element.width, encoded: btoa(bytes) };
     });
-    const qr = jsQR(Uint8ClampedArray.from(Buffer.from(encoded, "base64")), width, width);
-    expect(Boolean(qr)).toBe(true);
-    const link = new URL(qr!.data);
-    expect(link.origin).toBe(lanBase);
-    expect(link.pathname).toBe("/gate");
-    expect(link.hash.startsWith("#qr=")).toBe(true);
-    await phone.goto(link.href);
+    const data = jsQR(Uint8ClampedArray.from(Buffer.from(encoded, "base64")), width, width)?.data;
+    expect(Boolean(data)).toBe(true);
+    const hash = data!.startsWith("tmc1:") ? "#qr=" + data!.slice(5) : new URL(data!).hash;
+    const phone = await exit.newPage();
+    await phone.goto(base + "/gate" + hash);
     await expect(phone.getByRole("status")).toContainText("Đã đọc mã QR");
-    await expect(phone).toHaveURL(`${lanBase}/gate`);
-  }
-
-  async function confirmAt(gate: string) {
-    await phone.getByLabel("Chọn cổng").selectOption({ label: gate });
     await phone.getByRole("button", { name: "Xác nhận quét" }).click();
-  }
+    await expect(phone.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
+    await expect(person.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
 
-  await openEmployeeQr();
-  if (await employeeStatus.getByText("Đã ghi nhận giờ vào").count()) {
-    await confirmAt("Bình Dương – Cổng ra 1");
-    await expect(employeeStatus).toContainText("Đã ghi nhận giờ ra");
-    await openEmployeeQr();
+    const payroll = await hr.newPage();
+    await payroll.goto(base + "/attendance");
+    const row = payroll.getByRole("row").filter({ hasText: employeeId });
+    await expect(async () => {
+      await payroll.getByRole("button", { name: "Làm mới" }).click({ timeout: 2000 });
+      await expect(row.getByRole("cell").nth(2)).toHaveText(/^\d\d:\d\d$/, { timeout: 1000 });
+      await expect(row.getByRole("cell").nth(3)).toHaveText(/^\d\d:\d\d$/, { timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
+    await expect(payroll.getByRole("button", { name: "Xuất CSV cho lương" })).toBeEnabled();
+  } finally {
+    await Promise.all([admin.close(), entry.close(), exit.close(), employee.close(), hr.close()]);
   }
-  await expect(employeeStatus).not.toContainText("Đã ghi nhận giờ vào");
-  await confirmAt("Bình Dương – Cổng vào 1");
-  await expect(phone.getByRole("status")).toContainText(
-    "Xin chào Lê Minh Khôi, đã ghi nhận giờ vào",
-  );
-  await expect(employeeStatus).toContainText("Đã ghi nhận giờ vào");
-
-  await openEmployeeQr();
-  await confirmAt("Bình Dương – Cổng ra 1");
-  await expect(phone.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
-  await expect(employeeStatus).toContainText("Đã ghi nhận giờ ra");
 });

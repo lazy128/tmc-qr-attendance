@@ -26,36 +26,32 @@ describe("TMC frontend API contracts", () => {
     expect(JSON.parse(String(init.body))).toEqual(payload);
   });
 
-  it("requests a QR for the selected demo employee", async () => {
+  it("requests the signed-in employee's QR without sending an employee ID", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue({ ok: true, json: async () => ({ token: "signed" }) });
     vi.stubGlobal("fetch", fetchMock);
-    await workflow.pass("NV001", new AbortController().signal);
-    expect(fetchMock.mock.calls[0]?.[0]).toContain("/demo/v1/employees/NV001/qr");
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    await workflow.pass(new AbortController().signal);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/workplace/v1/me/qr");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST", credentials: "include" });
   });
 
   it("loads scoped daily timesheets with the requested filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
     vi.stubGlobal("fetch", fetchMock);
-    await workflow.rows("test-token", "2026-11", "NV001", new AbortController().signal);
+    await workflow.rows("2026-11", "NV001", new AbortController().signal);
     expect(fetchMock.mock.calls[0]?.[0]).toContain(
       "/attendance/v1/timesheets?month=2026-11&employeeId=NV001",
     );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
-      "Bearer test-token",
-    );
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("include");
   });
 
-  it("downloads a monthly report using the HR bearer token", async () => {
+  it("downloads a monthly report using the session cookie", async () => {
     const csv = new Blob(["event_id"]);
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: async () => csv });
     vi.stubGlobal("fetch", fetchMock);
-    expect(await workflow.export("hr", "2026-11", "csv")).toBe(csv);
+    expect(await workflow.export("2026-11", "csv")).toBe(csv);
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/attendance/v1/timesheets/csv?month=2026-11");
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
-      "Bearer hr",
-    );
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("include");
   });
 });

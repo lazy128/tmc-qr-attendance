@@ -55,7 +55,7 @@ class EdgeFlowTest {
   @BeforeAll
   static void start() throws Exception {
     app = (ServletWebServerApplicationContext) new SpringApplicationBuilder(EdgeApplication.class).run(
-        "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_flow_test",
+        "--spring.profiles.active=legacy", "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_flow_test",
         "--tmc.timesheet.export-dir=" + timesheetExports,
         "--tmc.hr.schedule=-", "--TMC_HR_DEMO_TOKEN=hr-test-token", "--TMC_GUARD_DEMO_TOKEN=guard-test-token",
         "--TMC_EMPLOYEE_DEMO_TOKEN=employee-test-token", "--TMC_ADMIN_DEMO_TOKEN=admin-test-token",
@@ -371,7 +371,7 @@ class EdgeFlowTest {
   @Test
   void actuatorReportsStaleSnapshotAndRealOutboxDepthWithoutHealthDetails() throws Exception {
     try (var stale = (ServletWebServerApplicationContext) new SpringApplicationBuilder(EdgeApplication.class).run(
-        "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_stale_test",
+        "--spring.profiles.active=legacy", "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_stale_test",
         "--tmc.hr.schedule=-", "--tmc.edge.local-demo-authority=false"
     )) {
       var jdbc = stale.getBean(JdbcTemplate.class);

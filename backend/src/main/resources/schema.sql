@@ -119,6 +119,7 @@ ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS directions VARCHAR(24) DEF
 ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS opens_at TIME;
 ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS closes_at TIME;
 ALTER TABLE access_attempt ADD COLUMN IF NOT EXISTS attendance_gate BOOLEAN DEFAULT TRUE NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_access_pending_scan ON access_attempt (site_id, employee_id, attendance_gate, command_state);
 
 CREATE INDEX IF NOT EXISTS idx_attendance_employee_time ON attendance_record(employee_id, scanned_at);
 
@@ -165,3 +166,34 @@ CREATE TABLE IF NOT EXISTS hr_export_batch (
   sent_at TIMESTAMP WITH TIME ZONE NOT NULL,
   acknowledged_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS workplace_employee (
+  employee_id VARCHAR(60) PRIMARY KEY,
+  full_name VARCHAR(120) NOT NULL,
+  site_id VARCHAR(100) NOT NULL,
+  department_id VARCHAR(60) NOT NULL,
+  access_group VARCHAR(16) NOT NULL,
+  shift_id VARCHAR(16) NOT NULL,
+  credential_id VARCHAR(120) NOT NULL UNIQUE REFERENCES credential(credential_id)
+);
+
+CREATE TABLE IF NOT EXISTS workplace_account (
+  username VARCHAR(60) PRIMARY KEY,
+  password_hash VARCHAR(180) NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  employee_id VARCHAR(60) UNIQUE REFERENCES workplace_employee(employee_id),
+  station_id VARCHAR(100) REFERENCES station_registry(station_id),
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  change_required BOOLEAN NOT NULL DEFAULT TRUE,
+  failed_attempts INT NOT NULL DEFAULT 0,
+  locked_until TIMESTAMP WITH TIME ZONE,
+  security_version INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS workplace_session (
+  session_id VARCHAR(36) PRIMARY KEY,
+  username VARCHAR(60) NOT NULL REFERENCES workplace_account(username),
+  security_version INT NOT NULL,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workplace_session_expiry ON workplace_session(expires_at);

@@ -76,6 +76,15 @@ public final class VerifyAccessUseCase {
     }
     if (context.attempt == null) {
       context.attempt = denied(request, failure == null ? Reason.POLICY_DENIED : failure, context);
+      if (failure == Reason.PERSIST_FAILED && context.idempotencyReserved) {
+        try {
+          idempotency.cancel(eventId);
+        } catch (RuntimeException unavailable) {
+          // The reservation expires if the database cannot be reached.
+        }
+        trace.add("NO_GATE_COMMAND");
+        return new AccessResult(context.attempt, List.copyOf(trace), false);
+      }
       try {
         if (context.idempotencyReserved) attempts.persistDenied(context.attempt);
         else attempts.auditRejection(context.attempt);

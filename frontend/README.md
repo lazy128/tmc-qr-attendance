@@ -1,47 +1,36 @@
 # Frontend TMC Chấm công
 
-Ứng dụng React và TanStack Start hiển thị mã QR, màn hình quét cổng và bảng công. Edge kiểm tra QR, ra quyết định và áp dụng quyền đọc dữ liệu.
+Ứng dụng React và TanStack Start kết nối Edge cùng origin qua `/edge-api`. Edge xác minh phiên, quyền và mã QR.
 
 ## Chạy và kiểm thử
 
-Cần Node.js 24. Chạy trong `frontend/`.
+Cần Node.js 24. Sau khi chạy backend profile `workplace`, thực hiện trong `frontend/`.
 
 ```powershell
-Copy-Item .env.example .env
 npm ci
-npm run dev
+$env:VITE_EDGE_API_URL = '/edge-api'
+npm run dev -- --strictPort
 ```
 
-`.env.example` trỏ tới profile nghiệp vụ ở `http://127.0.0.1:8084`. Frontend chạy ở `http://localhost:5173`. Nếu đổi host hoặc cổng frontend, đặt `tmc.cors.origins` ở Edge theo origin tương ứng.
+Mở [TMC Chấm công](http://localhost:5173). Các mục điều hướng xuất hiện theo quyền của tài khoản đang đăng nhập. `/employee` cấp QR cho chính người dùng. `/gate` xác minh tại trạm đã gán cho Bảo vệ. `/attendance` hiển thị bảng công theo phạm vi. `/stations` quản lý tài khoản và trạm.
 
-Mở `/employee` để chọn nhân viên và hiển thị QR. Mở `/gate` để chọn cổng và quét bằng camera hoặc ảnh. Mở `/attendance` để xem bảng công, sửa lượt thiếu giờ ra và tải báo cáo theo quyền. Registry trạm có ở `/stations`. [Hướng dẫn demo LAN, HTTPS và hai site](../README.md#chạy-demo)
+`TMC_DEV_PROXY_TARGET` mặc định là `http://127.0.0.1:8084`. Đặt `VITE_QR_SCAN_ORIGIN` khi màn hình hiển thị mã dùng localhost nhưng thiết bị quét mở liên kết qua LAN hoặc HTTPS. Triển khai qua proxy cùng origin và giữ cookie bảo mật. [Cách thiết lập bản nộp](../README.md#chạy-bản-nộp)
 
-```sh
-npm test
+```powershell
 npm run typecheck
+npm test
 npm run build
 ```
 
-Các test kiểm tra route, hợp đồng HTTP, tự làm mới mã và giao diện khi mã hết hạn hay credential bị thu hồi. [Test frontend](src/test)
+Bài Playwright dùng tài khoản do quản trị viên tạo, mô phỏng mất phản hồi từ máy chủ và kiểm tra lại kết quả chấm công. [Thiết lập kiểm thử](../README.md#kiểm-thử)
 
-## Tìm code theo chức năng
+## Tìm code
 
-| Vị trí | Trách nhiệm |
-| --- | --- |
-| [`src/routes/`](src/routes/) | Route TanStack và layout của ứng dụng. |
-| [`modules/access/`](src/modules/access/) | Form scan, API verify và kết quả tách riêng decision, command, passage. |
-| [`modules/userqr/`](src/modules/userqr/) | Trang nhân viên và mã QR tự làm mới. |
-| [`modules/attendance/`](src/modules/attendance/) | API tra cứu theo scope, bảng chấm công và tải CSV. |
-| [`modules/shared/`](src/modules/shared/) | HTTP client, địa chỉ Edge, chuẩn hóa lỗi và thành phần UI dùng chung. |
+| Vị trí                    | Chức năng                                               |
+| ------------------------- | ------------------------------------------------------- |
+| `src/modules/shared/ui/`  | Phiên đăng nhập, đổi mật khẩu và điều hướng theo quyền. |
+| `src/modules/userqr/`     | Hồ sơ và QR của nhân viên đang đăng nhập.               |
+| `src/modules/access/`     | Trạm quét, thử lại theo mã lượt và quản trị.            |
+| `src/modules/attendance/` | Bảng công, hiệu chỉnh và xuất báo cáo.                  |
 
-## Hợp đồng với Edge
-
-| Tác vụ | API |
-| --- | --- |
-| Chọn tài khoản và cấp QR demo | `GET /demo/v1/employees` và `POST /demo/v1/employees/{id}/qr` |
-| Quản lý trạm | `GET/POST /admin/v1/stations` và `PATCH /admin/v1/stations/{id}` |
-| Quét cổng | `POST /access/v1/verify` với `X-Station-Id`, `Idempotency-Key` và `X-Correlation-Id` |
-| Đọc chấm công | `GET /attendance/v1/timesheets?month=YYYY-MM` với bearer token |
-| Tải CSV hoặc XLSX | `GET /attendance/v1/timesheets/{csv,xlsx}?month=YYYY-MM` với bearer token HR |
-
-[Cấu hình và vận hành Edge](../backend/README.md) · [Ba view kiến trúc](../README.md#architecture-views)
+[API và cấu hình Edge](../backend/README.md) · [Ba view kiến trúc](../README.md#architecture-views)

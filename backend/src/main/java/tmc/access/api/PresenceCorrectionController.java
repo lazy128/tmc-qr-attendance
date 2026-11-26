@@ -11,21 +11,21 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.application.PermissionPolicy;
 import tmc.access.domain.port.PresenceCorrectionStore;
-import tmc.shared.DemoIdentity;
+import tmc.shared.Identity;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
 
 @RestController
 public class PresenceCorrectionController {
   private final PresenceCorrectionStore corrections;
-  private final DemoIdentity identity;
+  private final Identity identity;
   private final PermissionPolicy policy;
   private final ClockProvider clock;
   private final String site;
   private final String station;
 
   public PresenceCorrectionController(
-      PresenceCorrectionStore corrections, DemoIdentity identity, PermissionPolicy policy, ClockProvider clock,
+      PresenceCorrectionStore corrections, Identity identity, PermissionPolicy policy, ClockProvider clock,
       @Value("${tmc.edge.site:SITE-1}") String site, @Value("${tmc.edge.station:GATE-1}") String station
   ) {
     this.corrections = corrections;
@@ -43,15 +43,15 @@ public class PresenceCorrectionController {
       @RequestBody Correction request
   ) {
     String actor = identity.authenticate(authorization)
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Enter a valid demo bearer token"));
-    if (!policy.permits(actor, "presence:correct") || !station.equals(stationId)) {
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Đăng nhập tài khoản bảo vệ."));
+    if (!policy.permits(actor, "presence:correct") || !identity.assignedStation(actor).orElse(station).equals(stationId)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Correction requires the assigned guard");
     }
     if (!"MISSED_EXIT".equals(request.reason()) || request.lastEntryEventId() == null) {
       throw new IllegalArgumentException("Supply lastEntryEventId and reason MISSED_EXIT");
     }
     String correlationId = CorrelationIdFilter.currentId();
-    if (!corrections.correctMissedExit(request.lastEntryEventId(), site, station, actor, correlationId, clock.now())) {
+    if (!corrections.correctMissedExit(request.lastEntryEventId(), site, stationId, actor, correlationId, clock.now())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "That entry is no longer the current presence event");
     }
     return Map.of("status", "CORRECTED", "correlationId", correlationId);

@@ -12,6 +12,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tmc.access.domain.AccessAttempt;
+import tmc.access.domain.CredentialChangedException;
+import tmc.access.domain.AccessStates.Reason;
 import tmc.access.domain.AntiPassbackException;
 import tmc.access.domain.AccessStates.Command;
 import tmc.access.domain.AccessStates.Passage;
@@ -54,10 +56,11 @@ public final class JdbcAttemptStore
   public void persistPrepared(AccessAttempt attempt, String jti) {
     try {
       tx.executeWithoutResult(status -> {
-        jdbc.queryForObject(
-            "SELECT credential_id FROM credential WHERE credential_id=? FOR UPDATE",
-            String.class, attempt.credentialId()
-        );
+        var conflict = jdbc.query("SELECT active, version FROM credential WHERE credential_id=? FOR UPDATE", row -> {
+          if (!row.next() || !row.getBoolean("active")) return Reason.REVOKED;
+          return row.getInt("version") != attempt.credentialVersion() ? Reason.CVER_MISMATCH : null;
+        }, attempt.credentialId());
+        if (conflict != null) throw new CredentialChangedException(conflict);
         try {
           jdbc.update(
               "INSERT INTO used_token(site_id, jti, event_id) VALUES(?,?,?)",

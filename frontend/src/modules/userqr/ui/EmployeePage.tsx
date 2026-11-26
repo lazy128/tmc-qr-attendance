@@ -4,7 +4,8 @@ import QRCode from "qrcode";
 import { ApiRequestError } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
 import { employeeQrPayload } from "../../shared/lib/qr-link";
-import { DemoPage } from "../../shared/ui/DemoPage";
+import { AppPage } from "../../shared/ui/AppPage";
+import { RequireAccount } from "../../shared/ui/Auth";
 import {
   displayTime,
   groupLabel,
@@ -77,11 +78,16 @@ function EmployeePass({ employee }: { employee: Employee }) {
   const [now, setNow] = useState(0);
   const [error, setError] = useState("");
   const [revoked, setRevoked] = useState(false);
-  const fetchPass = useEffectEvent(async (id: string, signal: AbortSignal) => {
+  const fetchPass = useEffectEvent(async (signal: AbortSignal) => {
     const requestedAt = performance.now();
     try {
-      const issued = await workflow.pass(id, signal);
+      const issued = await workflow.pass(signal);
       if (signal.aborted) return;
+      if (issued.employeeId !== employee.id) {
+        setQr(null);
+        window.dispatchEvent(new Event("tmc-session-changed"));
+        return;
+      }
       const receivedAt = performance.now();
       const { iat, exp } = tokenDetails(issued.token);
       // The signed timestamps are rounded down to seconds. Budget for that and the request time.
@@ -113,7 +119,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
     const controller = new AbortController();
     const delay =
       deadline === undefined ? 0 : Math.max(1000, deadline - performance.now() - refreshLead);
-    const timer = window.setTimeout(() => void fetchPass(employee.id, controller.signal), delay);
+    const timer = window.setTimeout(() => void fetchPass(controller.signal), delay);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
@@ -129,8 +135,14 @@ function EmployeePass({ employee }: { employee: Employee }) {
     let timer = window.setTimeout(refreshAttendance, 2000);
     async function refreshAttendance() {
       try {
-        const latest = await workflow.attendance(employee.id, controller.signal);
-        if (!controller.signal.aborted) setLiveAttendance(latest);
+        const latest = await workflow.attendance(controller.signal);
+        if (controller.signal.aborted) return;
+        if (latest.employeeId !== employee.id) {
+          setQr(null);
+          window.dispatchEvent(new Event("tmc-session-changed"));
+          return;
+        }
+        setLiveAttendance(latest);
       } catch {
         // Keep the latest known attendance while the connection recovers.
       } finally {
@@ -177,8 +189,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
         <div>
           <h2>{employee.name}</h2>
           <p>
-            {employee.id} · {groupLabel[employee.accessGroup]} ·{" "}
-            {employee.siteId === "SITE-LA" ? "Long An" : "Bình Dương"}
+            {employee.id} · {groupLabel[employee.accessGroup]} · {employee.siteId}
           </p>
         </div>
       </div>
@@ -257,47 +268,56 @@ function EmployeePass({ employee }: { employee: Employee }) {
 }
 
 export function EmployeePage() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selection, setSelection] = useState("");
+  return (
+    <AppPage title="Mã QR của tôi">
+      <RequireAccount roles={["EMPLOYEE", "MANAGER"]}>
+        {(account) => <EmployeeProfile key={account.username} employeeId={account.employeeId} />}
+      </RequireAccount>
+    </AppPage>
+  );
+}
+
+function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
+  const [employee, setEmployee] = useState<Employee | null>(null);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     workflow
-      .employees(controller.signal)
-      .then((items) => {
-        if (!controller.signal.aborted) setEmployees(items);
+      .employee(controller.signal)
+      .then((person) => {
+        if (controller.signal.aborted) return;
+        if (person.id !== employeeId) {
+          window.dispatchEvent(new Event("tmc-session-changed"));
+          return;
+        }
+        setEmployee(person);
       })
       .catch((cause) => {
         if (!controller.signal.aborted) setError(errorMessage(cause));
       });
     return () => controller.abort();
-  }, []);
-  const employee = employees.find((item) => item.id === selection) ?? employees[0];
+  }, [employeeId, reload]);
   return (
-    <DemoPage title="Mã QR nhân viên">
-      <section className="workflow-card workflow-pass">
-        <label className="workflow-field">
-          Tài khoản demo
-          <select
-            value={employee?.id ?? ""}
-            disabled={!employee}
-            onChange={(event) => setSelection(event.target.value)}
-          >
-            {!employee && <option value="">Đang tải nhân viên…</option>}
-            {employees.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.name} · {item.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        {error && (
+    <section className="workflow-card workflow-pass">
+      {error && (
+        <div className="grid gap-2">
           <p role="alert" className="workflow-error">
-            Không tải được tài khoản demo. {error}
+            {error}
           </p>
-        )}
-        {employee && <EmployeePass key={employee.id} employee={employee} />}
-      </section>
-    </DemoPage>
+          <button
+            className="workflow-button"
+            onClick={() => {
+              setError("");
+              setReload((value) => value + 1);
+            }}
+          >
+            Thử lại
+          </button>
+        </div>
+      )}
+      {!error && !employee && <p role="status">Đang tải hồ sơ…</p>}
+      {employee && <EmployeePass key={employee.id} employee={employee} />}
+    </section>
   );
 }

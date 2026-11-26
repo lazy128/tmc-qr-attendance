@@ -3,8 +3,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import tmc.access.domain.Direction;
 import tmc.access.domain.port.PresenceTracker;
 public final class JdbcPresenceTracker implements PresenceTracker {
- private final JdbcTemplate jdbc;public JdbcPresenceTracker(JdbcTemplate jdbc){this.jdbc=jdbc;}
- @Override public boolean allowed(String site,String employee,Direction next){var current=jdbc.query("SELECT direction FROM employee_presence WHERE site_id=? AND employee_id=?",rs->rs.next()?rs.getString(1):null,site,employee);return current==null||!current.equals(next.name());}
+ private final JdbcTemplate jdbc;
+ private final boolean requireEntry;
+
+ public JdbcPresenceTracker(JdbcTemplate jdbc) { this(jdbc, false); }
+ public JdbcPresenceTracker(JdbcTemplate jdbc, boolean requireEntry) { this.jdbc = jdbc; this.requireEntry = requireEntry; }
+
+ @Override public boolean allowed(String site, String employee, Direction next) {
+   var current = jdbc.query("SELECT direction FROM employee_presence WHERE site_id=? AND employee_id=?",
+       rs -> rs.next() ? rs.getString(1) : null, site, employee);
+   return current == null ? !requireEntry || next == Direction.ENTRY : !current.equals(next.name());
+ }
  @Override public void acknowledged(String site,String employee,Direction direction,String event){store(site,employee,direction,event,"ACK_ONLY");}
  @Override public void confirmed(String site,String employee,Direction direction,String event) {
    jdbc.update(

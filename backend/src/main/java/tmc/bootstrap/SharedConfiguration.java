@@ -4,10 +4,12 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import tmc.access.infrastructure.security.DemoAccessPolicy;
 import tmc.shared.DemoIdentity;
+import tmc.shared.EmployeeDirectory;
 import tmc.shared.StaffDirectory;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.clock.SystemClockProvider;
@@ -17,11 +19,13 @@ import tmc.shared.id.UuidGenerator;
 @Configuration
 public class SharedConfiguration {
   @Bean
+  @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "false", matchIfMissing = true)
   DemoAccessPolicy demoAccessPolicy() {
     return new DemoAccessPolicy();
   }
 
   @Bean
+  @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "false", matchIfMissing = true)
   DemoIdentity demoIdentity(
       @Value("${TMC_HR_DEMO_TOKEN:}") String hr,
       @Value("${TMC_EMPLOYEE_DEMO_TOKEN:}") String employee,
@@ -42,6 +46,10 @@ public class SharedConfiguration {
         "manager", manager, "admin", admin, "guard", guard
     ), workflow);
   }
+
+  @Bean
+  @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "false", matchIfMissing = true)
+  EmployeeDirectory sampleDirectory() { return StaffDirectory::find; }
 
   @Bean
   ClockProvider clockProvider() {

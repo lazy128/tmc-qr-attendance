@@ -24,6 +24,7 @@ public class TimesheetPublicationWorker {
   private final TimesheetSink sink;
   private final ClockProvider clock;
   private final Set<String> employees;
+  private final boolean workplace;
   private final java.time.ZoneId zone;
   private final long retrySeconds;
   private boolean initialized;
@@ -31,6 +32,7 @@ public class TimesheetPublicationWorker {
   public TimesheetPublicationWorker(JdbcAttendanceStore events, JdbcTimesheets sheets, TimesheetService timesheets,
       TimesheetSink sink, ClockProvider clock, ScopeResolver scopes,
       @Value("${tmc.workflow.demo:false}") boolean demo,
+      @Value("${tmc.accounts.enabled:false}") boolean workplace,
       @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
       @Value("${tmc.timesheet.retry-seconds:30}") long retrySeconds) {
     this.events = events;
@@ -38,7 +40,8 @@ public class TimesheetPublicationWorker {
     this.timesheets = timesheets;
     this.sink = sink;
     this.clock = clock;
-    this.employees = scopes.visibleEmployeeIds(demo ? "work-hr" : "hr", "Timesheet");
+    this.workplace = workplace;
+    this.employees = workplace ? Set.of() : scopes.visibleEmployeeIds(demo ? "work-hr" : "hr", "Timesheet");
     this.zone = java.time.ZoneId.of(zone);
     this.retrySeconds = retrySeconds;
   }
@@ -53,7 +56,7 @@ public class TimesheetPublicationWorker {
       if ("FAILED".equals(item.status())) sheets.publicationResult(item, "RETRYING", null, null);
       try {
         var period = YearMonth.parse(item.period());
-        var rows = sheets.month(period).stream().filter(row -> employees.contains(row.employeeId())).toList();
+        var rows = sheets.month(period).stream().filter(row -> workplace || employees.contains(row.employeeId())).toList();
         sink.publish(rows, period);
         sheets.publicationResult(item, "SUCCESS", clock.now(), null);
       } catch (IOException | RuntimeException failure) {
