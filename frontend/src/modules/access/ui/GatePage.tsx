@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Camera, Check, ImageUp, ScanLine, X } from "lucide-react";
 import { configuredEdges } from "../../shared/config/edges";
 import { errorMessage } from "../../shared/lib/error-message";
+import { tokenFromQrLink } from "../../shared/lib/qr-link";
 import { DemoPage } from "../../shared/ui/DemoPage";
 import { displayTime, groupLabel, workflow, type Station } from "../../shared/workflow";
 import { accessApi } from "../api/access-api";
@@ -14,7 +15,8 @@ import { QrCamera } from "./QrCamera";
 type Gate = Station & { base: string; key: string };
 type Scan = { result: VerifyResult; gate: Gate; at: string };
 const reasons: Record<string, string> = {
-  TOKEN_EXPIRED: "Mã QR đã hết hạn",
+  TOKEN_EXPIRED: "Mã QR đã hết hạn. Hãy quét mã mới.",
+  CLOCK_SKEW: "Giờ trên thiết bị quét bị lệch. Hãy bật ngày giờ tự động rồi quét lại.",
   REPLAY: "Mã QR đã được dùng",
   REVOKED: "Thẻ đã bị thu hồi",
   CVER_MISMATCH: "Mã cũ. Hãy mở mã QR mới",
@@ -47,13 +49,17 @@ export function GatePage() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [selection, setSelection] = useState("");
   const [camera, setCamera] = useState(false);
+  const [linkedCode, setLinkedCode] = useState("");
   const [raw, setRaw] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Scan | null>(null);
   const [history, setHistory] = useState<Scan[]>([]);
+  const scanning = useRef(false);
   const lastCameraCode = useRef("");
   const gate = gates.find((item) => item.key === selection) ?? gates[0];
+  const canStream =
+    !gate || Boolean(globalThis.isSecureContext && navigator.mediaDevices?.getUserMedia);
   useEffect(() => {
     const controller = new AbortController();
     const urls = Array.from(new Set(configuredEdges().map((edge) => edge.url)));
@@ -76,19 +82,38 @@ export function GatePage() {
     return () => controller.abort();
   }, []);
   useEffect(() => {
-    if (!result) return;
+    function readLink() {
+      const code = tokenFromQrLink(window.location.href);
+      if (!code) return;
+      setLinkedCode(code);
+      setCamera(false);
+      setResult(null);
+      setError("");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
+    readLink();
+    window.addEventListener("hashchange", readLink);
+    return () => window.removeEventListener("hashchange", readLink);
+  }, []);
+  useEffect(() => {
+    if (!result || !camera) return;
     const timer = window.setTimeout(() => setResult(null), 4500);
     return () => window.clearTimeout(timer);
-  }, [result]);
+  }, [result, camera]);
 
   async function scan(read: () => string | undefined | Promise<string | undefined>) {
-    if (!gate || busy) return;
+    if (!gate || scanning.current) return;
+    scanning.current = true;
     setBusy(true);
     setError("");
     setResult(null);
     try {
       const code = await read();
-      if (!code) throw new Error("Không tìm thấy mã QR trong ảnh.");
+      if (!code) throw new Error("Không thấy mã QR. Hãy chụp gần hơn và lấy trọn mã trong ảnh.");
       const { token, deviceId } = parseScanToken(code);
       const scannedAt = new Date().toISOString();
       const verdict = await accessApi.verify(
@@ -109,8 +134,15 @@ export function GatePage() {
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
+      scanning.current = false;
       setBusy(false);
     }
+  }
+
+  function scanImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) void scan(() => readQrFile(file));
   }
 
   const zone = gate?.gate.type === "ZONE_GATE";
@@ -127,7 +159,6 @@ export function GatePage() {
               value={gate?.key ?? ""}
               onChange={(event) => {
                 setSelection(event.target.value);
-                lastCameraCode.current = "";
                 setResult(null);
                 setError("");
               }}
@@ -153,19 +184,13 @@ export function GatePage() {
               </p>
             )}
           </div>
-          <div
-            className={`workflow-scan ${result ? (good ? "accepted" : "rejected") : ""}`}
-            role="status"
-          >
-            {result ? (
-              <>
-                {good ? <Check size={46} /> : <X size={46} />}
-                <strong>{scanLabel(result)}</strong>
-              </>
-            ) : camera && !busy ? (
+          {camera && (
+            <div className="workflow-camera">
               <QrCamera
+                paused={busy}
                 ignoreCode={(code) => code === lastCameraCode.current}
                 onDecode={(code) => {
+                  if (scanning.current) return;
                   lastCameraCode.current = code;
                   void scan(() => code);
                 }}
@@ -174,40 +199,90 @@ export function GatePage() {
                   setError(message);
                 }}
               />
+            </div>
+          )}
+          <div
+            className={`workflow-scan${camera ? " with-camera" : ""}${result ? (good ? " accepted" : " rejected") : ""}`}
+            role="status"
+          >
+            {result ? (
+              <>
+                {good ? <Check size={46} /> : <X size={46} />}
+                <strong>{scanLabel(result)}</strong>
+              </>
             ) : (
               <>
                 <ScanLine size={45} />
-                <strong>{busy ? "Đang xác minh…" : "Sẵn sàng quét QR"}</strong>
-                {!busy && <p>Mở camera hoặc chọn ảnh QR của nhân viên.</p>}
+                <strong>
+                  {busy
+                    ? "Đang xác minh…"
+                    : linkedCode
+                      ? "Đã đọc mã QR"
+                      : camera
+                        ? "Đưa mã QR vào khung hình"
+                        : "Sẵn sàng quét QR"}
+                </strong>
+                {!busy && !camera && (
+                  <p>
+                    {linkedCode
+                      ? "Kiểm tra cổng đã chọn rồi xác nhận lượt quét."
+                      : canStream
+                        ? "Mở camera hoặc chọn ảnh QR của nhân viên."
+                        : "Chụp hoặc chọn ảnh QR của nhân viên."}
+                  </p>
+                )}
               </>
             )}
           </div>
           <div className="workflow-actions">
-            <button
-              className="workflow-button"
-              disabled={!gate || busy}
-              onClick={() => {
-                lastCameraCode.current = "";
-                setCamera(!camera);
-                setError("");
-              }}
-            >
-              <Camera size={18} />
-              {camera ? "Tắt camera" : "Mở camera"}
-            </button>
+            {linkedCode ? (
+              <button
+                className="workflow-button"
+                disabled={!gate || busy}
+                onClick={() => {
+                  setLinkedCode("");
+                  void scan(() => linkedCode);
+                }}
+              >
+                <Check size={18} /> Xác nhận quét
+              </button>
+            ) : canStream ? (
+              <button
+                className="workflow-button"
+                disabled={!gate || busy}
+                onClick={() => {
+                  lastCameraCode.current = "";
+                  setCamera(!camera);
+                  setResult(null);
+                  setError("");
+                }}
+              >
+                <Camera size={18} />
+                {camera ? "Tắt camera" : "Mở camera"}
+              </button>
+            ) : (
+              <label className="workflow-button relative">
+                <Camera size={18} /> Chụp mã QR
+                <input
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  aria-label="Chụp mã QR"
+                  disabled={!gate || busy}
+                  onChange={scanImage}
+                />
+              </label>
+            )}
             <label className="workflow-button secondary relative">
               <ImageUp size={18} /> Chọn ảnh QR
               <input
-                className="absolute inset-0 w-full cursor-pointer opacity-0"
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 type="file"
                 accept="image/*"
                 aria-label="Chọn ảnh QR"
                 disabled={!gate || busy}
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  if (file) void scan(() => readQrFile(file));
-                }}
+                onChange={scanImage}
               />
             </label>
           </div>

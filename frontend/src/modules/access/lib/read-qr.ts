@@ -19,12 +19,17 @@ export function readQr(
 }
 
 export async function readQrFile(file: File) {
-  const image = await createImageBitmap(file);
+  const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Không thể đọc ảnh trên trình duyệt này.");
+  const url = URL.createObjectURL(file);
   try {
-    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Không thể đọc ảnh trên trình duyệt này.");
-    return readQr(context, image, image.width, image.height);
+    const image = new Image();
+    image.src = url;
+    await image.decode().catch(() => {
+      throw new Error("Không mở được ảnh. Hãy chụp lại hoặc chọn ảnh JPG, PNG.");
+    });
+    return readQr(context, image, image.naturalWidth, image.naturalHeight);
   } finally {
-    image.close();
+    URL.revokeObjectURL(url);
   }
 }

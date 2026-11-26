@@ -232,8 +232,10 @@
   color: var(--workflow-muted);
 }
 .workflow-qr {
-  width: min(100%, 282px);
+  width: min(100%, 320px);
   aspect-ratio: 1;
+  display: grid;
+  place-items: center;
   justify-self: center;
   padding: 9px;
   border: 1px solid var(--workflow-border);
@@ -242,7 +244,7 @@
 }
 .workflow-qr canvas {
   display: block;
-  width: 100% !important;
+  max-width: 100%;
   height: auto !important;
   image-rendering: pixelated;
 }
@@ -260,6 +262,10 @@
   justify-content: center;
   gap: 10px;
   font-variant-numeric: tabular-nums;
+}
+.workflow-qr-hint {
+  color: var(--workflow-muted);
+  text-align: center;
 }
 .workflow-gate-grid {
   display: grid;
@@ -304,9 +310,19 @@
   color: #8b2324;
   background: #ffe6e2;
 }
-.workflow-scan video {
+.workflow-scan.with-camera {
+  min-height: 120px;
+}
+.workflow-camera {
+  overflow: hidden;
+  border-radius: 13px;
+  background: #163733;
+}
+.workflow-camera video {
+  display: block;
   width: 100%;
   max-height: 350px;
+  object-fit: contain;
 }
 .workflow-history > p {
   margin-top: 12px;

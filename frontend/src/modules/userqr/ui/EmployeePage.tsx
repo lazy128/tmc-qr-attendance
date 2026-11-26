@@ -3,28 +3,57 @@ import { BadgeCheck, Clock3, QrCode } from "lucide-react";
 import QRCode from "qrcode";
 import { ApiRequestError } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
+import { employeeQrPayload } from "../../shared/lib/qr-link";
 import { DemoPage } from "../../shared/ui/DemoPage";
-import { displayTime, groupLabel, workflow, type Employee, type Pass } from "../../shared/workflow";
+import {
+  displayTime,
+  groupLabel,
+  workflow,
+  type AttendanceStatus,
+  type Employee,
+  type Pass,
+} from "../../shared/workflow";
 
-function EmployeeQr({ token }: { token: string }) {
+const phoneRefreshLeadMs = 18_000;
+const phoneScanWindowMs = 15_000;
+const kioskRefreshLeadMs = 8_000;
+
+function EmployeeQr({ payload }: { payload: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!canvas.current) return;
+    const element = canvas.current;
+    if (!element) return;
     let active = true;
-    QRCode.toCanvas(canvas.current, `tmc1:${token}`, {
-      width: 320,
+    let observer: ResizeObserver | undefined;
+    const renderScale = 6;
+    QRCode.toCanvas(element, payload, {
+      scale: renderScale,
       margin: 4,
       errorCorrectionLevel: "M",
-    }).catch(() => {
-      if (active) setFailed(true);
-    });
+    })
+      .then(() => {
+        const container = element.parentElement;
+        if (!active || !container || typeof ResizeObserver === "undefined") return;
+        const modules = element.width / renderScale;
+        observer = new ResizeObserver(([entry]) => {
+          if (!entry) return;
+          // Give every QR module an equal number of screen pixels.
+          const pixelsPerModule = Math.max(1, Math.floor(entry.contentRect.width / modules));
+          element.style.width = `${pixelsPerModule * modules}px`;
+        });
+        observer.observe(container);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
     return () => {
       active = false;
+      observer?.disconnect();
     };
-  }, [token]);
+  }, [payload]);
   if (failed) return <p role="alert">Không thể hiển thị mã QR.</p>;
-  return <canvas ref={canvas} role="img" aria-label="Mã QR truy cập" className="h-auto w-full" />;
+  return <canvas ref={canvas} role="img" aria-label="Mã QR truy cập" />;
 }
 
 type TokenDetails = { jti?: string; cver?: number; kid?: string; iat?: number; exp?: number };
@@ -43,60 +72,100 @@ function tokenDetails(token: string): TokenDetails {
 }
 
 function EmployeePass({ employee }: { employee: Employee }) {
-  const [pass, setPass] = useState<Pass | null>(null);
+  const [qr, setQr] = useState<{ pass: Pass; payload: string; deadline: number } | null>(null);
+  const [liveAttendance, setLiveAttendance] = useState<AttendanceStatus | null>(null);
   const [now, setNow] = useState(0);
   const [error, setError] = useState("");
   const [revoked, setRevoked] = useState(false);
   const fetchPass = useEffectEvent(async (id: string, signal: AbortSignal) => {
+    const requestedAt = performance.now();
     try {
       const issued = await workflow.pass(id, signal);
       if (signal.aborted) return;
-      setNow(Date.now());
-      setPass(issued);
+      const receivedAt = performance.now();
+      const { iat, exp } = tokenDetails(issued.token);
+      // The signed timestamps are rounded down to seconds. Budget for that and the request time.
+      const deadline =
+        iat !== undefined && exp !== undefined
+          ? requestedAt + (exp - iat - 1) * 1000
+          : receivedAt + (Date.parse(issued.expiresAt) - Date.now());
+      setNow(receivedAt);
+      setQr({
+        pass: issued,
+        payload: employeeQrPayload(issued.token, window.location.origin),
+        deadline,
+      });
     } catch (cause) {
       if (signal.aborted) return;
       if (cause instanceof ApiRequestError && cause.code === "REVOKED") {
-        setPass(null);
+        setQr(null);
         setRevoked(true);
       } else {
         setError(errorMessage(cause));
       }
     }
   });
-  const expiresAt = pass?.expiresAt;
+  const deadline = qr?.deadline;
+  const phoneLink = qr?.payload.startsWith("http") ?? false;
+  const refreshLead = phoneLink ? phoneRefreshLeadMs : kioskRefreshLeadMs;
   useEffect(() => {
     if (revoked || error) return;
     const controller = new AbortController();
-    const delay = expiresAt ? Math.max(1000, Date.parse(expiresAt) - Date.now() - 8000) : 0;
+    const delay =
+      deadline === undefined ? 0 : Math.max(1000, deadline - performance.now() - refreshLead);
     const timer = window.setTimeout(() => void fetchPass(employee.id, controller.signal), delay);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [employee.id, expiresAt, error, revoked]);
+  }, [employee.id, deadline, refreshLead, error, revoked]);
   useEffect(() => {
-    if (!pass) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    if (deadline === undefined) return;
+    const timer = window.setInterval(() => setNow(performance.now()), 250);
     return () => window.clearInterval(timer);
-  }, [pass]);
-  const remaining = expiresAt ? Math.max(0, Math.ceil((Date.parse(expiresAt) - now) / 1000)) : 0;
+  }, [deadline]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer = window.setTimeout(refreshAttendance, 2000);
+    async function refreshAttendance() {
+      try {
+        const latest = await workflow.attendance(employee.id, controller.signal);
+        if (!controller.signal.aborted) setLiveAttendance(latest);
+      } catch {
+        // Keep the latest known attendance while the connection recovers.
+      } finally {
+        if (!controller.signal.aborted) timer = window.setTimeout(refreshAttendance, 2000);
+      }
+    }
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [employee.id]);
+  const pass = qr?.pass;
+  const remainingMs = Math.max(0, (deadline ?? now) - now);
+  const remaining = Math.ceil(remainingMs / 1000);
+  const canScan = remainingMs > (phoneLink ? phoneScanWindowMs : 0);
   const status = revoked
     ? "Đã thu hồi"
-    : remaining > 8
+    : remainingMs > refreshLead
       ? "Còn hiệu lực"
       : remaining > 0
-        ? "Sắp làm mới"
+        ? error && !canScan
+          ? "Chưa có mã mới"
+          : "Đang làm mới…"
         : pass
           ? "Đã hết hạn"
           : error
             ? "Chưa có mã"
             : "Đang tạo mã…";
+  const today = liveAttendance ?? pass;
   const attendance =
-    pass?.status === "IN_SHIFT"
-      ? "Đang trong ca"
-      : pass?.status === "LEFT"
-        ? "Đã ra"
-        : pass
+    today?.status === "IN_SHIFT"
+      ? "Đã ghi nhận giờ vào"
+      : today?.status === "LEFT"
+        ? "Đã ghi nhận giờ ra"
+        : today
           ? "Chưa vào"
           : "Đang kiểm tra";
   const claims = pass ? tokenDetails(pass.token) : null;
@@ -113,9 +182,24 @@ function EmployeePass({ employee }: { employee: Employee }) {
           </p>
         </div>
       </div>
+      <div className="workflow-today" role="status">
+        <Clock3 aria-hidden="true" />
+        <div>
+          <h3>Ca hôm nay</h3>
+          <strong>{attendance}</strong>
+          {today?.lastEntry && (
+            <p>
+              Giờ vào {displayTime(today.lastEntry)}
+              {today.status === "LEFT" && today.lastExit
+                ? ` · Giờ ra ${displayTime(today.lastExit)}`
+                : ""}
+            </p>
+          )}
+        </div>
+      </div>
       <div className="workflow-qr">
-        {pass && remaining > 0 ? (
-          <EmployeeQr key={pass.token} token={pass.token} />
+        {qr && canScan ? (
+          <EmployeeQr key={qr.pass.token} payload={qr.payload} />
         ) : (
           <div className="workflow-qr-empty">
             <QrCode size={52} />
@@ -125,8 +209,13 @@ function EmployeePass({ employee }: { employee: Employee }) {
       </div>
       <div className="workflow-qr-status">
         <span className={revoked ? "workflow-pill danger" : "workflow-pill"}>{status}</span>
-        {remaining > 0 && <strong>{remaining} giây</strong>}
+        {canScan && <strong>{remaining} giây</strong>}
       </div>
+      {canScan && (
+        <p className="workflow-qr-hint">
+          Đưa mã vào máy quét tại cổng. Trạng thái ca sẽ tự cập nhật sau khi xác minh.
+        </p>
+      )}
       {error && (
         <div className="grid gap-2">
           <p className="workflow-error" role="alert">
@@ -135,7 +224,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
           <button
             className="workflow-button secondary"
             onClick={() => {
-              setPass(null);
+              setQr(null);
               setError("");
             }}
           >
@@ -143,19 +232,6 @@ function EmployeePass({ employee }: { employee: Employee }) {
           </button>
         </div>
       )}
-      <div className="workflow-today">
-        <Clock3 aria-hidden="true" />
-        <div>
-          <h3>Ca hôm nay</h3>
-          <strong>{attendance}</strong>
-          {pass?.lastEntry && (
-            <p>
-              Giờ vào {displayTime(pass.lastEntry)}
-              {pass.status === "LEFT" && pass.lastExit ? ` · Giờ ra ${displayTime(pass.lastExit)}` : ""}
-            </p>
-          )}
-        </div>
-      </div>
       <details className="workflow-technical">
         <summary>Chi tiết kỹ thuật</summary>
         {claims ? (

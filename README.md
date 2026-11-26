@@ -58,15 +58,18 @@ Google Sheets là adapter khung, mặc định tắt. Các thuộc tính dự ki
 
 Cổng khu vực ghi AccessAttempt và audit. Quyền theo nhóm khai báo tường minh, đúng site, đúng hướng và đúng khung giờ đã cấu hình. `tmc.access.shift-grace-minutes` mặc định 10 phút. Admin cấu hình trường `gate` trên `POST/PATCH /admin/v1/stations` với `name`, `type`, `allowedGroups`, `directions` và cặp giờ tùy chọn `opensAt` / `closesAt`. Bật `tmc.access.enforce-employee-shift=true` để áp dụng thêm lịch ca ngày và ca đêm của nhân viên, với các mốc `tmc.access.shift.standard-open`, `standard-close`, `night-open`, `night-close`. Công tắc mặc định tắt cho demo. Snapshot ngoài file khai báo `employees` theo credential ID. Trong demo, dữ liệu mẫu và cơ sở dữ liệu local đóng vai trò snapshot tin cậy. Nhóm quyền và tên nhân viên nằm ở Edge. Ma trận trên cần TMC duyệt, và việc miễn chấm công cho lãnh đạo do HR quyết định.
 
-### Điện thoại hiển thị QR qua LAN
+### Thử bằng điện thoại qua Wi-Fi
 
-Ví dụ IP LAN của laptop là `192.168.1.25`. Chạy backend profile `workflow` ở cổng 8084. Dùng cùng Wi-Fi và thay IP trong các lệnh dưới đây bằng IP laptop. Dùng dữ liệu mẫu trên mạng tin cậy vì HTTP truyền mã demo dưới dạng rõ.
+Ví dụ IP LAN của laptop là `192.168.1.25`. Kết nối hai thiết bị vào cùng Wi-Fi và thay IP ví dụ bằng IP laptop. Dùng dữ liệu mẫu trên mạng tin cậy.
 
-- Trong terminal backend, trước khi chạy, đặt `$env:SERVER_ADDRESS = '0.0.0.0'` và `$env:TMC_CORS_ORIGINS = 'http://localhost:5173,http://192.168.1.25:5173'`.
-- Trong terminal frontend, đặt `$env:VITE_EDGE_API_URL = 'http://192.168.1.25:8084'` và chạy `npm run dev -- --host 0.0.0.0 --strictPort`. Nếu firewall chặn, cho phép TCP 5173 và 8084 trên mạng riêng.
-- Trên điện thoại mở `http://192.168.1.25:5173/employee`. Trên laptop mở `http://localhost:5173/gate` để trình duyệt cấp quyền camera. Hai trang dùng cùng Edge.
+- Trong terminal backend, đặt `$env:SERVER_ADDRESS = '127.0.0.1'` và `$env:TMC_CORS_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.25:5173'`, rồi chạy profile `workflow` ở cổng 8084.
+- Trong terminal frontend, đặt `$env:VITE_EDGE_API_URL = '/edge-api'`, `$env:TMC_DEV_PROXY_TARGET = 'http://127.0.0.1:8084'` và `$env:VITE_QR_SCAN_ORIGIN = 'http://192.168.1.25:5173'`. Chạy `npm run dev -- --host 0.0.0.0 --strictPort`. Nếu firewall chặn, cho phép TCP 5173 trên mạng riêng.
+- Mở `/employee` trên laptop và quét QR bằng Camera trên điện thoại. Mở liên kết mà Camera nhận ra, chọn cổng vào hoặc ra rồi bấm **Xác nhận quét**. Kiosk hiện kết quả và mục **Ca hôm nay** trên laptop tự cập nhật. Khi mở `/employee` từ chính địa chỉ Wi‑Fi, có thể bỏ `VITE_QR_SCAN_ORIGIN`.
+- Có thể mở `/gate` trên điện thoại và dùng **Chụp mã QR**. Để thử camera trực tiếp, mở `/employee` trên điện thoại và đưa mã vào **Mở camera** tại `http://localhost:5173/gate` trên laptop. Camera tiếp tục quét sau mỗi lượt.
 
 ### Điện thoại làm máy quét qua HTTPS
+
+Để quét liên tục bằng điện thoại, mở Kiosk qua HTTPS và bấm **Mở camera**.
 
 Với **mkcert**, giữ backend ở loopback và đặt `TMC_CORS_ORIGINS=https://localhost:5173,https://192.168.1.25:5173` trước khi chạy backend. Trong `frontend/`, dùng chứng chỉ chứa IP LAN của laptop và cho điện thoại tin cậy `rootCA.pem` từ thư mục `mkcert -CAROOT`. Chỉ chuyển chứng chỉ CA công khai sang điện thoại. [Hướng dẫn mkcert cho thiết bị di động](https://github.com/FiloSottile/mkcert#mobile-devices)
 
@@ -134,7 +137,7 @@ $issued.token
 | --- | --- | --- |
 | Backend | `backend/` | `.\mvnw.cmd test` trên Windows hoặc `./mvnw test` trên macOS/Linux. Dùng `verify` để chạy thêm bước đóng gói JAR. |
 | Frontend | `frontend/` | `npm ci`, `npm run typecheck`, `npm test`, `npm run build`. |
-| Luồng trên trình duyệt | `frontend/` | Bật profile `workflow` và frontend, chạy `npx playwright install chromium` rồi `npm run test:e2e`. Có thể đặt `PLAYWRIGHT_CHROME_PATH` tới Chrome đã cài và `E2E_WORKFLOW_SCREENSHOTS` tới thư mục nhận ba ảnh. Dùng DB demo mới có dữ liệu mẫu của tháng đang xem. |
+| Luồng trên trình duyệt | `frontend/` | Bật profile `workflow` và frontend, chạy `npx playwright install chromium` rồi `npm run test:e2e`. Đặt `PLAYWRIGHT_LAN_BASE_URL` bằng địa chỉ HTTP của frontend trên Wi-Fi để kiểm tra nút chụp QR qua LAN. Có thể đặt `PLAYWRIGHT_CHROME_PATH` tới Chrome đã cài và `E2E_WORKFLOW_SCREENSHOTS` tới thư mục nhận ba ảnh. Dùng DB demo mới có dữ liệu mẫu của tháng đang xem. |
 | GitHub Actions | `.github/workflows/ci.yml` | Ubuntu chạy `mvn -B test` với Java 21 và chạy `npm ci`, `npm run typecheck`, `npm test` với Node.js 24 khi push hoặc mở pull request. |
 
 ## Cách tổ chức repo

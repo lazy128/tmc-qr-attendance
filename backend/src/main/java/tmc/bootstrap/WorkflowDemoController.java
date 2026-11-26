@@ -76,7 +76,7 @@ public class WorkflowDemoController {
 
   @PostMapping("/demo/v1/employees/{id}/qr")
   public ResponseEntity<?> qr(@PathVariable String id) {
-    var employee = employee(id);
+    employee(id);
     var credentialId = WorkflowDemoConfiguration.credentialId(id);
     var credential = credentials.getCredential(credentialId).orElseThrow();
     if (!credential.active()) {
@@ -88,13 +88,24 @@ public class WorkflowDemoController {
     var token = issue.issue(credentialId, device);
     var now = clock.now();
     audit.append("work-" + id, "QR_ISSUE", credentialId, "SUCCESS", CorrelationIdFilter.currentId(), now);
+    var attendance = attendanceFor(id, now);
+    return ResponseEntity.ok().header("Cache-Control", "no-store")
+        .body(new Pass(token.token(), token.expiresAt(), attendance.status(), attendance.lastEntry(), attendance.lastExit()));
+  }
+
+  @GetMapping("/demo/v1/employees/{id}/attendance")
+  public ResponseEntity<Attendance> attendance(@PathVariable String id) {
+    employee(id);
+    return ResponseEntity.ok().header("Cache-Control", "no-store").body(attendanceFor(id, clock.now()));
+  }
+
+  private Attendance attendanceFor(String id, Instant now) {
     var day = timesheets.calculate(id, calculator.workDate(now));
     String status = day.map(data -> data.unpairedEntry() != null ? "IN_SHIFT"
         : data.row().lastOut() != null ? "LEFT" : "NOT_ENTERED").orElse("NOT_ENTERED");
     var lastEntry = day.map(TimesheetCalculator.Calculation::lastEntry).orElse(null);
     var lastExit = day.map(data -> data.row().lastOut()).orElse(null);
-    return ResponseEntity.ok().header("Cache-Control", "no-store")
-        .body(new Pass(token.token(), token.expiresAt(), status, lastEntry, lastExit));
+    return new Attendance(status, lastEntry, lastExit);
   }
 
   private static Employee employee(String id) {
@@ -102,5 +113,6 @@ public class WorkflowDemoController {
   }
 
   public record Session(String role, String employeeId) {}
+  public record Attendance(String status, Instant lastEntry, Instant lastExit) {}
   public record Pass(String token, Instant expiresAt, String status, Instant lastEntry, Instant lastExit) {}
 }

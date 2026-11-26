@@ -2,13 +2,12 @@ import { request, download } from "./http/client";
 
 export type Group = "STAFF" | "MANAGER" | "EXECUTIVE";
 export type Employee = { id: string; name: string; accessGroup: Group; siteId: string };
-export type Pass = {
-  token: string;
-  expiresAt: string;
+export type AttendanceStatus = {
   status: "NOT_ENTERED" | "IN_SHIFT" | "LEFT";
   lastEntry: string | null;
   lastExit: string | null;
 };
+export type Pass = AttendanceStatus & { token: string; expiresAt: string };
 export type Station = {
   siteId: string;
   stationId: string;
@@ -45,6 +44,10 @@ export const workflow = {
   employees: (signal: AbortSignal) => request<Employee[]>("/demo/v1/employees", { signal }),
   pass: (id: string, signal: AbortSignal) =>
     request<Pass>(`/demo/v1/employees/${encodeURIComponent(id)}/qr`, { method: "POST", signal }),
+  attendance: (id: string, signal: AbortSignal) =>
+    request<AttendanceStatus>(`/demo/v1/employees/${encodeURIComponent(id)}/attendance`, {
+      signal,
+    }),
   gates: (base: string, signal: AbortSignal) =>
     request<Station[]>("/demo/v1/gates", { signal }, base),
   session: (role: Role, employeeId: string, signal: AbortSignal) =>

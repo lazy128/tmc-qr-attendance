@@ -6,22 +6,26 @@ type Detector = { detect(source: HTMLVideoElement): Promise<{ rawValue: string }
 export function QrCamera({
   onDecode,
   onFailure,
+  paused,
   ignoreCode,
 }: {
   onDecode: (code: string) => void;
   onFailure: (message: string) => void;
+  paused: boolean;
   ignoreCode?: (code: string) => boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const decode = useEffectEvent(onDecode);
+  const canRead = useEffectEvent(() => !paused);
+  const decode = useEffectEvent((code: string) => {
+    if (!paused && !ignoreCode?.(code)) onDecode(code);
+  });
   const fail = useEffectEvent(onFailure);
-  const ignored = useEffectEvent((code: string) => ignoreCode?.(code) ?? false);
 
   useEffect(() => {
     const video = videoRef.current;
     const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
     if (!video || !context || !navigator.mediaDevices?.getUserMedia) {
-      fail("Camera cần localhost hoặc HTTPS. Bạn vẫn có thể tải ảnh QR hoặc dán token.");
+      fail("Không mở được camera trực tiếp. Hãy chụp hoặc chọn ảnh QR.");
       return;
     }
 
@@ -49,7 +53,14 @@ export function QrCamera({
 
     async function scan(time: number) {
       if (!active) return;
-      if (video && context && video.videoWidth && video.readyState >= 2 && time - lastRead >= 125) {
+      if (
+        canRead() &&
+        video &&
+        context &&
+        video.videoWidth &&
+        video.readyState >= 2 &&
+        time - lastRead >= 125
+      ) {
         lastRead = time;
         let code: string | undefined;
         try {
@@ -62,14 +73,10 @@ export function QrCamera({
           if (!code) code = readQr(context, video, video.videoWidth, video.videoHeight);
         } catch {
           stop();
-          fail("Không đọc được hình từ camera. Hãy mở lại camera hoặc nhập token bằng tay.");
+          fail("Không đọc được hình từ camera. Hãy mở lại camera hoặc chọn ảnh QR.");
           return;
         }
-        if (code && !ignored(code)) {
-          stop();
-          decode(code);
-          return;
-        }
+        if (code) decode(code);
       }
       frame = requestAnimationFrame(scan);
     }
@@ -92,9 +99,9 @@ export function QrCamera({
         const name = error instanceof Error ? error.name : "";
         fail(
           name === "NotAllowedError"
-            ? "Quyền camera bị từ chối. Hãy cấp quyền hoặc nhập token bằng tay."
+            ? "Quyền camera bị từ chối. Hãy cấp quyền hoặc dùng ảnh QR."
             : name === "NotFoundError"
-              ? "Không tìm thấy camera. Bạn có thể nhập token bằng tay."
+              ? "Không tìm thấy camera. Bạn có thể chọn ảnh QR."
               : "Không mở được camera. Kiểm tra kết nối hoặc ứng dụng đang dùng camera.",
         );
       });
@@ -102,12 +109,5 @@ export function QrCamera({
     return stop;
   }, []);
 
-  return (
-    <video
-      ref={videoRef}
-      aria-label="Camera quét QR"
-      playsInline
-      muted
-    />
-  );
+  return <video ref={videoRef} aria-label="Camera quét QR" playsInline muted />;
 }

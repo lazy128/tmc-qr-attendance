@@ -1,6 +1,8 @@
+import { tokenFromQrLink } from "../../shared/lib/qr-link";
+
 export function stripQrPrefix(raw: string) {
   const code = raw.trim();
-  return code.startsWith("tmc1:") ? code.slice(5) : code;
+  return code.startsWith("tmc1:") ? code.slice(5) : (tokenFromQrLink(code) ?? code);
 }
 
 export function parseScanToken(raw: string) {
