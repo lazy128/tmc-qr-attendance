@@ -56,7 +56,7 @@ public class AttendanceController {
   ) {
     String actor = authorize(authorization, "attendance:read");
     Set<String> visible = scopes.visibleEmployeeIds(actor, switch (actor) {
-      case "employee" -> "Own";
+      case "employee", "employee-2" -> "Own";
       case "manager" -> "Team";
       default -> "Authorized";
     });

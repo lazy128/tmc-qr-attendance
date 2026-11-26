@@ -22,12 +22,14 @@ public class SharedConfiguration {
   DemoIdentity demoIdentity(
       @Value("${TMC_HR_DEMO_TOKEN:}") String hr,
       @Value("${TMC_EMPLOYEE_DEMO_TOKEN:}") String employee,
+      @Value("${TMC_EMPLOYEE_2_DEMO_TOKEN:}") String employee2,
       @Value("${TMC_MANAGER_DEMO_TOKEN:}") String manager,
       @Value("${TMC_ADMIN_DEMO_TOKEN:}") String admin,
       @Value("${TMC_GUARD_DEMO_TOKEN:}") String guard
   ) {
     return new DemoIdentity(Map.of(
-        "hr", hr, "employee", employee, "manager", manager, "admin", admin, "guard", guard
+        "hr", hr, "employee", employee, "employee-2", employee2,
+        "manager", manager, "admin", admin, "guard", guard
     ));
   }
 

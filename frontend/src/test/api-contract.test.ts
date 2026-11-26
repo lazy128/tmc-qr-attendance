@@ -21,9 +21,13 @@ describe("TMC frontend API contracts", () => {
   it("uses the backend QR issue and revoke routes", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ token: "signed", status: "REVOKED" }) });
     vi.stubGlobal("fetch", fetchMock);
-    await qrApi.issue("cred-1", "device-1");
-    await qrApi.revoke("cred-1");
+    await qrApi.issue("cred-1", "employee", "registered-proof");
+    await qrApi.revoke("cred-1", "hr");
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/qr/v1/tokens");
+    const issue = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(issue.headers).get("Authorization")).toBe("Bearer employee");
+    expect(new Headers(issue.headers).get("X-Device-Proof")).toBe("registered-proof");
+    expect(JSON.parse(String(issue.body))).toEqual({ credentialId: "cred-1" });
     expect(fetchMock.mock.calls[1]?.[0]).toContain("/qr/v1/credentials/cred-1/revoke");
   });
 

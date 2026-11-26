@@ -73,10 +73,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "TMC Attendance Console" },
+      { title: "TMC FacilityOS" },
       { name: "description", content: "QR access and attendance console for TMC factories" },
       { name: "author", content: "TMC" },
-      { property: "og:title", content: "TMC Attendance Console" },
+      { property: "og:title", content: "TMC FacilityOS" },
       { property: "og:description", content: "QR access and attendance console for TMC factories" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -97,7 +97,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="vi">
       <head>
         <HeadContent />
       </head>

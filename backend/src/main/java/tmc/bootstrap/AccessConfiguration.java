@@ -28,13 +28,13 @@ import tmc.access.domain.port.GateResult;
 import tmc.access.domain.port.SnapshotProvider;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.AccessRequest;
-import tmc.access.infrastructure.security.EdgeSecuritySimulation;
 import tmc.access.infrastructure.security.Es256TokenCodec;
 import tmc.access.infrastructure.turnstile.FakeTurnstileAdapter;
 import tmc.access.infrastructure.snapshot.FileSnapshotProvider;
 import tmc.access.infrastructure.persistence.JdbcCredentialStore;
 import tmc.access.infrastructure.persistence.JdbcPresenceTracker;
 import tmc.access.infrastructure.persistence.JdbcAttemptStore;
+import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
 import tmc.access.infrastructure.snapshot.MutableSnapshot;
 import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
@@ -134,6 +134,13 @@ public class AccessConfiguration {
   }
 
   @Bean
+  JdbcStationRegistry stationRegistry(JdbcTemplate jdbc,
+      @Value("${tmc.edge.station:GATE-1}") String station,
+      @Value("${tmc.edge.site:SITE-1}") String site) {
+    return new JdbcStationRegistry(jdbc, site, station);
+  }
+
+  @Bean
   VerifyAccessUseCase verifyAccess(
       JdbcCredentialStore credentials,
       JdbcAttemptStore jdbc,
@@ -143,16 +150,14 @@ public class AccessConfiguration {
       JdbcPresenceTracker presence,
       ClockProvider clock,
       MeterRegistry metrics,
-      @Value("${tmc.edge.station:GATE-1}") String station,
-      @Value("${tmc.edge.site:SITE-1}") String site,
+      JdbcStationRegistry stations,
       @Value("${tmc.edge.passage-sensor:false}") boolean sensorConfigured,
       @Value("${tmc.clock.skew-seconds:5}") long skew,
       @Value("${tmc.edge.snapshot-max-age-seconds:900}") long snapshotAge
   ) {
-    var security = new EdgeSecuritySimulation(station, site);
     var steps = VerificationPipeline.create(
-        security,
-        security,
+        stations,
+        stations,
         codec,
         credentials,
         snapshot,

@@ -1,9 +1,34 @@
-import { CircleAlert, ShieldCheck } from "lucide-react";
+import {
+  ArrowRight,
+  Building2,
+  ClipboardList,
+  LayoutGrid,
+  ScanLine,
+  ShieldCheck,
+  Smartphone,
+} from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useSyncExternalStore } from "react";
 import { AccessWorkspace } from "../access/ui/AccessWorkspace";
 import { AttendanceWorkspace } from "../attendance/ui/AttendanceWorkspace";
-import { API_BASE } from "../shared/config/api-base";
-import { useEdgeConsole } from "./use-edge-console";
+import { CredentialWorkspace } from "../userqr/ui/CredentialWorkspace";
+import { useEdgeConsole, type ConsoleTab } from "./use-edge-console";
+
+const navigation = {
+  overview: { title: "Operations workspace", label: "Tổng quan", icon: LayoutGrid },
+  access: { title: "Gate Access Service", label: "Truy cập cổng", icon: ScanLine },
+  qr: { title: "User & QR Service", label: "Nhân viên & QR", icon: Smartphone },
+  attendance: { title: "Attendance Service", label: "Chấm công & HR", icon: ClipboardList },
+} satisfies Record<ConsoleTab, { title: string; label: string; icon: typeof ScanLine }>;
+
+const modules = [
+  { page: "access", detail: "Quét mã ở kiosk và xem quyết định, lệnh cổng, chứng cứ qua cổng." },
+  { page: "qr", detail: "Cấp mã QR từ Edge và hiển thị trên thẻ nhân viên điện tử." },
+  {
+    page: "attendance",
+    detail: "Xem sổ chấm công trong phạm vi được cấp quyền và tải CSV theo tháng.",
+  },
+] as const;
 
 const subscribeToHydration = () => () => {};
 const clientIsReady = () => true;
@@ -11,96 +36,145 @@ const serverIsReady = () => false;
 
 export function EdgeConsole() {
   const ready = useSyncExternalStore(subscribeToHydration, clientIsReady, serverIsReady);
-  const consoleState = useEdgeConsole();
+  const state = useEdgeConsole();
 
   return (
-    <main className="min-h-screen bg-[#f5f7f6] text-slate-900">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl bg-emerald-700 text-white">
-              <ShieldCheck />
-            </div>
-            <div>
-              <b className="text-sm tracking-wide">TMC MANUFACTURING</b>
-              <p className="text-xs text-slate-500">Access & attendance · Edge console</p>
-            </div>
-          </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">● Edge demo</span>
-        </div>
-      </header>
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+    <div className="facility-app">
+      <aside className="facility-sidebar">
+        <div className="facility-brand">
+          <span>TMC</span>
           <div>
-            <p className="text-xs font-bold uppercase tracking-[.18em] text-emerald-700">Factory operations</p>
-            <h1 className="mt-2 text-3xl font-semibold">Gate activity</h1>
-            <p className="mt-1 text-sm text-slate-500">Scans go to the local Edge Agent. Central sync is asynchronous.</p>
+            <strong>FacilityOS</strong>
+            <small>ACCESS INTELLIGENCE</small>
           </div>
-          <div className="rounded-lg border bg-white px-3 py-2 font-mono text-xs text-slate-500">API {API_BASE}</div>
         </div>
-        <nav className="mb-6 flex gap-5 border-b">
-          {(
-            [
-              ["access", "Access check"],
-              ["attendance", "Attendance records"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              disabled={!ready}
-              onClick={() => consoleState.setTab(id)}
-              className={`border-b-2 px-2 py-3 text-sm ${
-                consoleState.tab === id
-                  ? "border-emerald-700 font-semibold text-emerald-800"
-                  : "border-transparent text-slate-500"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <nav aria-label="Các module" className="facility-nav">
+          {(Object.keys(navigation) as ConsoleTab[]).map((page) => {
+            const { label, icon: Icon } = navigation[page];
+            return (
+              <button
+                key={page}
+                type="button"
+                disabled={!ready}
+                aria-current={state.tab === page ? "page" : undefined}
+                onClick={() => state.setTab(page)}
+              >
+                <Icon size={17} aria-hidden="true" /> {label}
+              </button>
+            );
+          })}
         </nav>
-        {consoleState.error && (
-          <div role="alert" className="mb-5 flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-            <CircleAlert size={17} />
-            {consoleState.error}
+        <div className="facility-side-status">
+          <ShieldCheck size={16} /> TMC · Edge demo
+        </div>
+      </aside>
+      <main className="facility-main">
+        <header className="facility-topbar">
+          <div>
+            <span>TMC</span>
+            <span aria-hidden="true"> / </span>
+            <strong>{navigation[state.tab].title}</strong>
           </div>
-        )}
-        <fieldset disabled={!ready} className="min-w-0">
-          {consoleState.tab === "access" ? (
-            <AccessWorkspace
-              site={consoleState.site}
-              station={consoleState.station}
-              credential={consoleState.credential}
-              device={consoleState.device}
-              token={consoleState.token}
-              direction={consoleState.direction}
-              busy={consoleState.busy}
-              result={consoleState.result}
-              onSite={consoleState.setSite}
-              onStation={consoleState.setStation}
-              onCredential={consoleState.setCredential}
-              onDevice={consoleState.setDevice}
-              onToken={consoleState.setToken}
-              onDirection={consoleState.setDirection}
-              onIssue={consoleState.issueQr}
-              onRevoke={consoleState.revokeQr}
-              onVerify={consoleState.verify}
-            />
-          ) : (
-            <AttendanceWorkspace
-              rows={consoleState.rows}
-              busy={consoleState.busy}
-              token={consoleState.attendanceToken}
-              onToken={consoleState.updateAttendanceToken}
-              onRefresh={consoleState.refreshAttendance}
-              onExport={consoleState.exportAttendance}
-            />
+          <span className="facility-site">
+            <Building2 size={15} /> {state.site || "Chưa chọn site"}
+          </span>
+        </header>
+        <div className="facility-content">
+          <h1>{navigation[state.tab].title}</h1>
+          {state.error && (
+            <p className="facility-error" role="alert">
+              {state.error}
+            </p>
           )}
-        </fieldset>
-        <footer className="mt-8 text-xs text-slate-400">
-          Demo station auth, keys, Turnstile and some storage are simulations. Do not use production data.
-        </footer>
-      </div>
-    </main>
+          <fieldset disabled={!ready} className="min-w-0">
+            {state.tab === "overview" && (
+              <>
+                <section className="facility-hero">
+                  <div>
+                    <h2>Ba module, một luồng truy cập</h2>
+                    <p>Cấp QR nhân viên, quét ở cổng và xem bản ghi chấm công từ Edge.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => state.setTab("access")}
+                    className="facility-button facility-button--white"
+                  >
+                    <ScanLine size={16} /> Mở Kiosk
+                  </button>
+                </section>
+                <nav className="facility-actions my-4" aria-label="Màn hình demo">
+                  <Link to="/employee" className="facility-button">Trang nhân viên</Link>
+                  <Link to="/gate" className="facility-button">Kiosk cổng</Link>
+                  <Link to="/stations" className="facility-button">Quản lý trạm</Link>
+                </nav>
+                <div className="facility-modules">
+                  {modules.map(({ page, detail }) => {
+                    const { title, icon: Icon } = navigation[page];
+                    return (
+                      <section key={page} className="facility-card facility-module">
+                        <span className={"facility-module-icon facility-module-icon--" + page}>
+                          <Icon size={23} />
+                        </span>
+                        <h2>{title}</h2>
+                        <p>{detail}</p>
+                        <button
+                          type="button"
+                          className="facility-link"
+                          onClick={() => state.setTab(page)}
+                        >
+                          Mở module <ArrowRight size={15} />
+                        </button>
+                      </section>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {state.tab === "access" && (
+              <AccessWorkspace
+                site={state.site}
+                station={state.station}
+                device={state.device}
+                token={state.token}
+                issuedQr={state.issuedQr}
+                direction={state.direction}
+                busy={state.busy}
+                result={state.result}
+                onSite={state.setSite}
+                onStation={state.setStation}
+                onDevice={state.setDevice}
+                onToken={state.setToken}
+                onDirection={state.setDirection}
+                onVerify={state.verify}
+                onOpenQr={() => state.setTab("qr")}
+              />
+            )}
+            {state.tab === "qr" && (
+              <CredentialWorkspace
+                credential={state.credential}
+                device={state.device}
+                issuedQr={state.issuedQr}
+                busy={state.busy}
+                onCredential={state.setCredential}
+                onDevice={state.setDevice}
+                onIssue={state.issueQr}
+                onRevoke={state.revokeQr}
+                onOpenKiosk={() => state.setTab("access")}
+              />
+            )}
+            {state.tab === "attendance" && (
+              <AttendanceWorkspace
+                rows={state.rows}
+                busy={state.busy}
+                token={state.attendanceToken}
+                onToken={state.updateAttendanceToken}
+                onRefresh={state.refreshAttendance}
+                onExport={state.exportAttendance}
+              />
+            )}
+          </fieldset>
+        </div>
+      </main>
+    </div>
   );
 }

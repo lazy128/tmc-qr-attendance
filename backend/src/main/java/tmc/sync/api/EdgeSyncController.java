@@ -1,5 +1,6 @@
 package tmc.sync.api;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,9 +21,11 @@ import tmc.sync.application.CentralSyncReceiver;
 @RestController
 public class EdgeSyncController {
   private final CentralSyncReceiver receiver;
+  private final MeterRegistry metrics;
 
-  public EdgeSyncController(CentralSyncReceiver receiver) {
+  public EdgeSyncController(CentralSyncReceiver receiver, MeterRegistry metrics) {
     this.receiver = receiver;
+    this.metrics = metrics;
   }
 
   @PostMapping("/edge/v1/sync")
@@ -50,6 +53,9 @@ public class EdgeSyncController {
       );
       var result = receiver.receive(attempt);
       String status = result.suspicious() ? "SUSPICIOUS" : result.duplicate() ? "DUPLICATE" : "ACCEPTED";
+      if (result.suspicious() && !result.duplicate()) {
+        metrics.counter("tmc.central.sync.suspicious").increment();
+      }
       return new SyncResult(event.eventId(), status);
     }).toList();
   }

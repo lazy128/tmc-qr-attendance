@@ -10,6 +10,7 @@ Chạy trong `backend/`. Dùng Java 21 và chọn một cách khởi động.
 
 ```powershell
 $env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
+$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -19,6 +20,7 @@ Trên macOS/Linux, dùng `export TMC_HR_DEMO_TOKEN=tmc-local-hr` và `./mvnw spr
 
 ```powershell
 $env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
+$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
 docker compose up --build
 ```
 
@@ -28,8 +30,12 @@ Compose build JAR bằng Maven, chạy bằng JRE 21 và publish cổng trên lo
 
 | API | Trách nhiệm |
 | --- | --- |
-| `POST /qr/v1/tokens` | Cấp token cho cặp credential và device đã có. Cặp mẫu là `demo-credential` / `demo-device`. |
-| `POST /qr/v1/credentials/{id}/revoke` | Thu hồi credential và tăng phiên bản. |
+| `POST /qr/v1/tokens` | Nhân viên gửi `{ "credentialId": "demo-credential" }`, bearer và `X-Device-Proof`. Edge xác minh quyền sở hữu, lấy định danh thiết bị từ bảng đăng ký và trả `token`, `expiresAt`. |
+| `POST /qr/v1/credentials/{id}/devices` | HR cấp hoặc thay mã đăng ký. Response chứa `deviceProof` cần chuyển cho nhân viên. |
+| `POST /qr/v1/credentials/{id}/revoke` | HR thu hồi credential và tăng phiên bản. |
+| `GET /admin/v1/stations` | Trả `{ stations, canManage }`. Admin xem trạm của Edge. Bảo vệ chỉ xem trạm được giao. |
+| `POST /admin/v1/stations` | Admin đưa `siteId`, `stationId`, `gateId` vào registry. Site phải trùng cấu hình Edge. |
+| `PATCH /admin/v1/stations/{id}` | Admin cập nhật `gateId` hoặc `status` (`ACTIVE`, `DISABLED`). |
 | `POST /access/v1/verify` | Xác minh scan tại Edge. Gửi `X-Station-Id: GATE-1`, `siteId=SITE-1`, hướng và thời gian scan. `Idempotency-Key`, nếu gửi, phải trùng `eventId`. |
 | `POST /gates/v1/passage-events` | Nhận chứng cứ passage riêng. Demo yêu cầu bearer của guard và ID trạm. |
 | `POST /gates/v1/presence-corrections` | Guard sửa quên quét ra bằng `lastEntryEventId` và `reason=MISSED_EXIT`. Hành động được audit và chỉ đổi presence. |
@@ -41,11 +47,11 @@ Compose build JAR bằng Maven, chạy bằng JRE 21 và publish cổng trên lo
 
 | Danh tính demo | Biến môi trường | Scope hoặc tác vụ |
 | --- | --- | --- |
-| Employee | `TMC_EMPLOYEE_DEMO_TOKEN` | Own attendance |
+| Employee | `TMC_EMPLOYEE_DEMO_TOKEN`, `TMC_EMPLOYEE_2_DEMO_TOKEN` | Cấp QR và đọc chấm công của chính mình |
 | Manager | `TMC_MANAGER_DEMO_TOKEN` | Team attendance |
-| HR | `TMC_HR_DEMO_TOKEN` | Authorized attendance, tải CSV |
-| Guard | `TMC_GUARD_DEMO_TOKEN` | Chứng cứ passage và sửa presence ở trạm được giao |
-| System Administrator | `TMC_ADMIN_DEMO_TOKEN` | Có policy cấu hình demo. API attendance từ chối role này. |
+| HR | `TMC_HR_DEMO_TOKEN` | Authorized attendance, tải CSV, đăng ký thiết bị, thu hồi credential |
+| Guard | `TMC_GUARD_DEMO_TOKEN` | Xem trạm được giao, gửi chứng cứ passage và sửa presence |
+| System Administrator | `TMC_ADMIN_DEMO_TOKEN` | Đọc và quản lý registry trạm |
 
 Mỗi token demo phải khác nhau. Token rỗng vô hiệu hóa danh tính tương ứng. Gửi token qua `Authorization: Bearer <token>`. Dùng dữ liệu mẫu khi chạy demo.
 
@@ -57,7 +63,7 @@ Mỗi token demo phải khác nhau. Token rỗng vô hiệu hóa danh tính tư�
 | `tmc.qr.keystore`, `tmc.qr.signing-kid` | Demo sinh khóa ES256 khi khởi động. Có thể dùng PKCS#12 với `TMC_QR_KEYSTORE_PASSWORD`; các alias hợp lệ cung cấp public key cho verify. |
 | `tmc.central.enabled`, `tmc.central.url` | Dispatch tắt mặc định. Khi bật, worker gọi URL Central bất đồng bộ. |
 | `tmc.hr.zone`, `tmc.hr.schedule` | `Asia/Ho_Chi_Minh` và job chạy mỗi 5 phút trong ngày 1. Dùng `tmc.hr.schedule=-` để tắt. |
-| `tmc.cors.origins` | Cho phép frontend Vite ở `localhost:5173` và `127.0.0.1:5173`. |
+| `SERVER_ADDRESS`, `TMC_CORS_ORIGINS` | Bind loopback mặc định. Đặt `SERVER_ADDRESS=0.0.0.0` và danh sách origin phân cách bằng dấu phẩy khi demo trực tiếp qua LAN. |
 
 TTL 30 giây, skew 5 giây, snapshot tối đa 15 phút, timeout Turnstile 800 ms và lease 60 giây là tham số demo, chờ TMC xác nhận. Job HR lưu batch tháng trước cùng các mốc ready, sent và ACK mô phỏng.
 
@@ -71,6 +77,7 @@ TTL 30 giây, skew 5 giây, snapshot tối đa 15 phút, timeout Turnstile 800 m
 | `tmc.edge.outbox.depth` | Số dòng đang chờ xử lý. Chỉ tính backlog Central khi dispatch được bật. |
 | `tmc.edge.verify.decisions` | Kết quả ALLOW/DENY, kể cả response idempotent. Lọc bằng `?tag=decision:DENY` hoặc `?tag=reasonCode:REPLAY`. |
 | `tmc.edge.gate.commands` | Outcome ban đầu theo `status`, gồm ACKED, UNKNOWN và FAILED. Replay idempotent không gửi thêm lệnh. |
+| `tmc.central.sync.suspicious` | Số sự kiện đồng bộ mới bị đánh dấu `SUSPICIOUS`. |
 | `http.server.requests` | Thời gian server. Lọc verify bằng `?tag=method:POST&tag=uri:%2Faccess%2Fv1%2Fverify`. |
 
 Metric quyết định và timer xuất hiện sau khi có request tương ứng. Log verify có correlation ID và mã kết quả. Client có thể gửi một ID vô danh hợp lệ trong `X-Correlation-Id` hoặc đọc ID do server sinh từ response.
@@ -86,7 +93,7 @@ Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B tes
 
 Ngày 25/11/2026, `mvnw.cmd clean verify` chạy trên Windows với JDK 21 và một kho dependency Maven trống. Kết quả là **79 test đạt** và JAR được đóng gói thành công. Log đầy đủ của lần chạy local nằm ở `verification-logs/maven-verify.log` từ thư mục gốc. [Test từng bước](src/test/java/tmc/access/application/step/) · [Workflow CI](../.github/workflows/ci.yml)
 
-Để đo tải fresh DB đang chạy, dùng `node scripts/access-load.mjs` từ `backend/`. Mặc định script phát 800 scan trong 30 phút cho một site, đo HTTP verify và ghi JSON Lines. Để chạy đồng thời hai site, dùng hai instance và DB riêng, đặt `EDGE_URL`, `SITE_ID`, `STATION_ID` và `LOAD_REPORT` cho từng tiến trình. Tạo đường dẫn báo cáo mới cho mỗi lần chạy. Có thể đặt `DURATION_SECONDS=30` để thử nhanh.
+Để đo tải trên DB mới, đặt `TMC_EMPLOYEE_DEMO_TOKEN` và `TMC_DEVICE_PROOF` đã đăng ký trên Edge, rồi chạy `node scripts/access-load.mjs` từ `backend/`. Script mặc định phát 800 scan trong 30 phút, đo HTTP verify và ghi JSON Lines. Khi chạy hai site, đặt `EDGE_URL`, `SITE_ID`, `STATION_ID`, `TMC_DEVICE_PROOF` và `LOAD_REPORT` cho từng tiến trình. Tạo đường dẫn báo cáo mới cho mỗi lần chạy. Có thể đặt `DURATION_SECONDS=30` để thử nhanh. [Khởi động và kiểm tra hai site](../README.md#demo-hai-nhà-máy)
 
 | Lần đo local Phase 2, H2 file và fake Turnstile | ACKED | Lỗi hoặc timeout | Trên 2 giây | Max |
 | --- | ---: | ---: | ---: | ---: |

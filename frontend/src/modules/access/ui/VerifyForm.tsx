@@ -1,88 +1,73 @@
-import { ArrowDownToLine, ArrowUpFromLine, Fingerprint } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, ScanLine } from "lucide-react";
 import { TextField } from "../../shared/ui/TextField";
 
 type VerifyFormProps = {
   site: string;
   station: string;
-  credential: string;
   device: string;
   token: string;
   direction: "ENTRY" | "EXIT";
   busy: boolean;
   onSite: (value: string) => void;
   onStation: (value: string) => void;
-  onCredential: (value: string) => void;
   onDevice: (value: string) => void;
   onToken: (value: string) => void;
   onDirection: (value: "ENTRY" | "EXIT") => void;
-  onIssue: () => void;
-  onRevoke: () => void;
-  onVerify: () => void;
+  onVerify: (token: string) => void;
 };
 
 export function VerifyForm(props: VerifyFormProps) {
   return (
-    <section className="rounded-2xl border bg-white p-6 shadow-sm">
-      <div className="mb-5 flex gap-3">
-        <Fingerprint className="text-emerald-700" />
-        <div>
-          <h2 className="font-semibold">Verify employee QR</h2>
-          <p className="text-sm text-slate-500">Issue a short-lived token, then simulate a station scan.</p>
-        </div>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+    <form
+      className="facility-card facility-scan-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!props.busy && props.token.trim()) props.onVerify(props.token);
+      }}
+    >
+      <h2>Cấu hình lượt quét</h2>
+      <div className="facility-field-grid">
         <TextField label="Site ID" value={props.site} onChange={props.onSite} />
         <TextField label="Station ID" value={props.station} onChange={props.onStation} />
-        <TextField label="Credential ID" value={props.credential} onChange={props.onCredential} />
-        <TextField label="Device binding" value={props.device} onChange={props.onDevice} />
+        <TextField label="Thiết bị" value={props.device} onChange={props.onDevice} />
+        <div>
+          <span className="facility-field-caption">Chiều qua cổng</span>
+          <div className="facility-directions">
+            <button
+              type="button"
+              aria-pressed={props.direction === "ENTRY"}
+              onClick={() => props.onDirection("ENTRY")}
+            >
+              <ArrowDownToLine size={15} /> Vào
+            </button>
+            <button
+              type="button"
+              aria-pressed={props.direction === "EXIT"}
+              onClick={() => props.onDirection("EXIT")}
+            >
+              <ArrowUpFromLine size={15} /> Ra
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <button
-          disabled={props.busy}
-          onClick={props.onIssue}
-          className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-        >
-          {props.busy ? "Working…" : "Issue QR token"}
-        </button>
-        <button
-          disabled={props.busy}
-          onClick={props.onRevoke}
-          className="rounded-lg border border-rose-200 px-3 py-2 text-xs text-rose-700"
-        >
-          Revoke QR
-        </button>
-        <button
-          onClick={() => props.onDirection("ENTRY")}
-          className={`flex gap-1 rounded-lg border px-3 py-2 text-xs ${props.direction === "ENTRY" ? "bg-emerald-50 text-emerald-800" : ""}`}
-        >
-          <ArrowDownToLine size={15} />
-          Entry
-        </button>
-        <button
-          onClick={() => props.onDirection("EXIT")}
-          className={`flex gap-1 rounded-lg border px-3 py-2 text-xs ${props.direction === "EXIT" ? "bg-emerald-50 text-emerald-800" : ""}`}
-        >
-          <ArrowUpFromLine size={15} />
-          Exit
-        </button>
-      </div>
-      <label className="mt-5 block text-xs font-semibold text-slate-600">
-        Signed QR token
-        <textarea
-          rows={3}
+      <label className="facility-token-field">
+        Token từ máy quét
+        <input
           value={props.token}
           onChange={(event) => props.onToken(event.target.value)}
-          className="mt-2 w-full rounded-lg border bg-slate-50 p-3 font-mono text-xs"
-          placeholder="Issue or paste a signed token"
+          placeholder="Quét bằng đầu đọc USB hoặc dán token"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={4096}
         />
       </label>
       <button
-        disabled={props.busy || !props.token}
-        onClick={props.onVerify}
-        className="mt-4 w-full rounded-lg bg-emerald-700 py-3 text-sm font-semibold text-white disabled:opacity-50"
+        type="submit"
+        disabled={props.busy || !props.token.trim()}
+        className="facility-button facility-button--primary"
       >
-        Verify at gate
+        <ScanLine size={16} /> {props.busy ? "Đang xác minh…" : "Xác minh tại cổng"}
       </button>
-    </section>
+    </form>
   );
 }

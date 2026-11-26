@@ -10,6 +10,9 @@ if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
 }
 const site = process.env.SITE_ID ?? "SITE-1";
 const station = process.env.STATION_ID ?? "GATE-1";
+const bearer = process.env.TMC_EMPLOYEE_DEMO_TOKEN;
+const proof = process.env.TMC_DEVICE_PROOF;
+if (!bearer || !proof) throw new Error("Set TMC_EMPLOYEE_DEMO_TOKEN and TMC_DEVICE_PROOF for the enrolled demo device.");
 const scans = Number(process.env.SCAN_COUNT ?? 800);
 const seconds = Number(process.env.DURATION_SECONDS ?? 1800);
 if (!Number.isSafeInteger(scans) || scans < 1 || !Number.isFinite(seconds) || seconds <= 0) {
@@ -45,8 +48,8 @@ for (let index = 0; index < scans; index += 1) {
   let sentAt;
   try {
     const issue = await post("/qr/v1/tokens", {
-      credentialId: "demo-credential", deviceHash: "demo-device",
-    });
+      credentialId: "demo-credential",
+    }, { Authorization: `Bearer ${bearer}`, "X-Device-Proof": proof });
     if (issue.status !== 200 || !issue.body.token) throw new Error(`QR_ISSUE_HTTP_${issue.status}`);
     sentAt = performance.now();
     const verify = await post("/access/v1/verify", {

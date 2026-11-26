@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS employee_presence (
   PRIMARY KEY (site_id, employee_id)
 );
 
+CREATE TABLE IF NOT EXISTS device_binding (
+  credential_id VARCHAR(120) PRIMARY KEY REFERENCES credential(credential_id),
+  device_hash VARCHAR(256) NOT NULL,
+  proof_hash VARCHAR(64) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS station_registry (
+  station_id VARCHAR(100) PRIMARY KEY,
+  site_id VARCHAR(100) NOT NULL,
+  gate_id VARCHAR(100) NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  last_heartbeat_at TIMESTAMP WITH TIME ZONE
+);
+
 CREATE TABLE IF NOT EXISTS hr_export_batch (
   period VARCHAR(7) PRIMARY KEY,
   csv_payload CLOB NOT NULL,

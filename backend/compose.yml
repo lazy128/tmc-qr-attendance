@@ -6,6 +6,11 @@ services:
     environment:
       SERVER_ADDRESS: 0.0.0.0
       TMC_HR_DEMO_TOKEN: "${TMC_HR_DEMO_TOKEN:-}"
+      TMC_EMPLOYEE_DEMO_TOKEN: "${TMC_EMPLOYEE_DEMO_TOKEN:-}"
+      TMC_EMPLOYEE_2_DEMO_TOKEN: "${TMC_EMPLOYEE_2_DEMO_TOKEN:-}"
+      TMC_ADMIN_DEMO_TOKEN: "${TMC_ADMIN_DEMO_TOKEN:-}"
+      TMC_GUARD_DEMO_TOKEN: "${TMC_GUARD_DEMO_TOKEN:-}"
+      TMC_MANAGER_DEMO_TOKEN: "${TMC_MANAGER_DEMO_TOKEN:-}"
     command: ["--tmc.edge.snapshot-max-age-seconds=900"]
     volumes:
       - edge-data:/app/data

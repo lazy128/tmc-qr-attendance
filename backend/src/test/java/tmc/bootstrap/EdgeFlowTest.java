@@ -39,6 +39,7 @@ import tmc.bootstrap.worker.HrExportWorker;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.audit.AuditHash;
 import tmc.shared.web.CorrelationIdFilter;
+import tmc.userqr.application.IssueQrToken;
 
 class EdgeFlowTest {
   private static final ZoneId HR_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
@@ -46,21 +47,100 @@ class EdgeFlowTest {
   private static ServletWebServerApplicationContext app;
   private static ObjectMapper json;
   private static String base;
+  private static Map<String, String> deviceProofs;
 
   @BeforeAll
-  static void start() {
+  static void start() throws Exception {
     app = (ServletWebServerApplicationContext) new SpringApplicationBuilder(EdgeApplication.class).run(
         "--server.port=0", "--spring.datasource.url=jdbc:h2:mem:edge_flow_test",
         "--tmc.hr.schedule=-", "--TMC_HR_DEMO_TOKEN=hr-test-token", "--TMC_GUARD_DEMO_TOKEN=guard-test-token",
-        "--TMC_EMPLOYEE_DEMO_TOKEN=employee-test-token", "--TMC_ADMIN_DEMO_TOKEN=admin-test-token"
+        "--TMC_EMPLOYEE_DEMO_TOKEN=employee-test-token", "--TMC_ADMIN_DEMO_TOKEN=admin-test-token",
+        "--TMC_EMPLOYEE_2_DEMO_TOKEN=employee-2-test-token",
+        "--tmc.cors.origins=http://localhost:5173,http://192.168.20.5:5173"
     );
     base = "http://127.0.0.1:" + app.getWebServer().getPort();
     json = app.getBean(ObjectMapper.class);
+    deviceProofs = Map.of("demo-credential", enroll("demo-credential"),
+        "demo-credential-2", enroll("demo-credential-2"));
   }
 
   @AfterAll
   static void stop() {
     if (app != null) app.close();
+  }
+
+  @Test
+  void configuredLanOriginCanSendDeviceProof() throws Exception {
+    var allowed = preflight("http://192.168.20.5:5173");
+    assertThat(allowed.statusCode()).isEqualTo(200);
+    assertThat(allowed.headers().firstValue("Access-Control-Allow-Origin")).contains("http://192.168.20.5:5173");
+    assertThat(allowed.headers().firstValue("Access-Control-Allow-Headers").orElse(""))
+        .containsIgnoringCase("X-Device-Proof");
+    assertThat(preflight("http://192.168.20.6:5173").statusCode()).isEqualTo(403);
+  }
+
+  private static HttpResponse<String> preflight(String origin) throws Exception {
+    return HTTP.send(request("/qr/v1/tokens", null).header("Origin", origin)
+        .header("Access-Control-Request-Method", "POST")
+        .header("Access-Control-Request-Headers", "Authorization, Content-Type, X-Device-Proof")
+        .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void stationRegistryScopesRolesAndBlocksDisabledStations() throws Exception {
+    var path = "/admin/v1/stations";
+    var admin = "admin-test-token";
+    var guard = "guard-test-token";
+    var station = "TEST-STATION";
+    var create = Map.of("siteId", "SITE-1", "stationId", station, "gateId", "GATE-TEST");
+    assertThat(get(path, null).statusCode()).isEqualTo(401);
+    assertThat(get(path, "employee-test-token").statusCode()).isEqualTo(403);
+    assertThat(post(path, create, guard).statusCode()).isEqualTo(403);
+    assertThat(post(path, create, admin).statusCode()).isEqualTo(201);
+    assertThat(post(path, create, admin).statusCode()).isEqualTo(409);
+    assertThat(get(path, admin).body()).contains(station, "lastHeartbeatAt");
+    assertThat(get(path, guard).body()).contains("GATE-1").doesNotContain(station);
+
+    var response = HTTP.send(request(path + "/" + station, admin).header("Content-Type", "application/json")
+        .method("PATCH", HttpRequest.BodyPublishers.ofString("{\"status\":\"DISABLED\"}")).build(),
+        HttpResponse.BodyHandlers.ofString());
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(json.readTree(response.body()).path("status").asText()).isEqualTo("DISABLED");
+    var scan = HTTP.send(request("/access/v1/verify", null).header("Content-Type", "application/json")
+        .header("X-Station-Id", station)
+        .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(scan("demo-credential", "demo-device", "ENTRY"))))
+        .build(), HttpResponse.BodyHandlers.ofString());
+    assertThat(json.readTree(scan.body()).path("reasonCode").asText()).isEqualTo("STATION_AUTH_FAILED");
+  }
+
+  @Test
+  void requiresIdentityOwnershipAndAnEnrolledDeviceForQrIssue() throws Exception {
+    String id = "demo-credential";
+    String proof = deviceProofs.get(id);
+    assertThat(issue(id, null, proof).statusCode()).isEqualTo(401);
+    assertThat(issue("demo-credential-2", "employee-test-token", proof).statusCode()).isEqualTo(403);
+    var unknown = issue(id, "employee-test-token", deviceProofs.get("demo-credential-2"));
+    assertThat(unknown.statusCode()).isEqualTo(403);
+    assertThat(json.readTree(unknown.body()).path("code").asText()).isEqualTo("DEVICE_MISMATCH");
+    assertThat(post("/qr/v1/credentials/" + id + "/revoke", Map.of(), null).statusCode()).isEqualTo(401);
+    assertThat(post("/qr/v1/credentials/" + id + "/revoke", Map.of(), "employee-test-token").statusCode()).isEqualTo(403);
+    assertThat(post("/qr/v1/credentials/" + id + "/devices", Map.of(), "employee-test-token").statusCode()).isEqualTo(403);
+    assertThat(issue(id, "employee-test-token", proof).statusCode()).isEqualTo(200);
+    assertThat(app.getBean(JdbcTemplate.class).queryForObject(
+        "SELECT actor FROM edge_audit WHERE action = 'QR_ISSUE' AND target = ? ORDER BY id DESC LIMIT 1",
+        String.class, id)).isEqualTo("employee");
+
+    var revocable = "revocable-credential";
+    app.getBean(JdbcCredentialStore.class).save(new Credential(revocable, "demo-employee", 1, true, "demo-device"));
+    var revocableProof = enroll(revocable);
+    var issued = issue(revocable, "employee-test-token", revocableProof);
+    assertThat(issued.statusCode()).isEqualTo(200);
+    assertThat(post("/qr/v1/credentials/" + revocable + "/revoke", Map.of(), "hr-test-token").statusCode()).isEqualTo(200);
+    assertThat(json.readTree(issue(revocable, "employee-test-token", revocableProof).body()).path("code").asText())
+        .isEqualTo("REVOKED");
+    assertThat(app.getBean(JdbcTemplate.class).queryForObject(
+        "SELECT actor FROM edge_audit WHERE action = 'QR_REVOKE' AND target = ?", String.class, revocable))
+        .isEqualTo("hr");
   }
 
   @Test
@@ -333,13 +413,34 @@ class EdgeFlowTest {
   }
 
   private static Map<String, String> scan(String credential, String device, String direction) throws Exception {
-    var issue = post("/qr/v1/tokens", Map.of("credentialId", credential, "deviceHash", device), null);
-    assertThat(issue.statusCode()).isEqualTo(200);
+    String token;
+    if (deviceProofs.containsKey(credential)) {
+      String bearer = credential.equals("demo-credential") ? "employee-test-token" : "employee-2-test-token";
+      var issue = issue(credential, bearer, deviceProofs.get(credential));
+      assertThat(issue.statusCode()).withFailMessage(issue.body()).isEqualTo(200);
+      token = json.readTree(issue.body()).path("token").asText();
+    } else {
+      token = app.getBean(IssueQrToken.class).issue(credential, device).token();
+    }
     return Map.of(
         "eventId", UUID.randomUUID().toString(), "siteId", "SITE-1", "direction", direction,
         "scannedAt", Instant.now().toString(), "deviceId", device,
-        "token", json.readTree(issue.body()).path("token").asText()
+        "token", token
     );
+  }
+
+  private static HttpResponse<String> issue(String credential, String token, String proof) throws Exception {
+    var request = request("/qr/v1/tokens", token).header("Content-Type", "application/json");
+    if (proof != null) request.header("X-Device-Proof", proof);
+    return HTTP.send(request.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(
+        Map.of("credentialId", credential, "deviceHash", "untrusted-device")))).build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static String enroll(String credential) throws Exception {
+    var response = post("/qr/v1/credentials/" + credential + "/devices", Map.of(), "hr-test-token");
+    assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+    return json.readTree(response.body()).path("deviceProof").asText();
   }
 
   private static JsonNode verify(Map<String, String> body) throws Exception {

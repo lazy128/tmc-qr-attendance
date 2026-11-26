@@ -15,10 +15,13 @@ Cần **Java 21** và **Node.js 24**. Maven Wrapper tự tải Maven trong lần
 ```powershell
 cd backend
 $env:TMC_HR_DEMO_TOKEN = 'tmc-local-hr'
+$env:TMC_EMPLOYEE_DEMO_TOKEN = 'tmc-local-employee'
+$env:TMC_ADMIN_DEMO_TOKEN = 'tmc-local-admin'
+$env:TMC_GUARD_DEMO_TOKEN = 'tmc-local-guard'
 .\mvnw.cmd spring-boot:run
 ```
 
-Trên macOS/Linux, đặt token bằng `export TMC_HR_DEMO_TOKEN=tmc-local-hr` và chạy `./mvnw spring-boot:run`. Docker Compose cũng có sẵn. [Cấu hình backend và Docker](backend/README.md)
+Trên macOS/Linux, đặt các biến bằng `export KEY=value` và chạy `./mvnw spring-boot:run`. Các giá trị trên dùng với dữ liệu mẫu trên máy cục bộ. [Cấu hình backend và Docker](backend/README.md)
 
 **Terminal 2 · Frontend**
 
@@ -29,7 +32,86 @@ npm ci
 npm run dev
 ```
 
-Mở [console](http://localhost:5173). Ở **Access check**, giữ `SITE-1` / `GATE-1` và `demo-credential` / `demo-device`. Bấm **Issue QR token**, rồi **Verify at gate** trong 30 giây. Ở **Attendance records**, nhập `tmc-local-hr`, bấm **Load records** và chọn tháng cần tải CSV. Bản ghi xuất hiện sau khi worker xử lý outbox.
+1. Mở `http://localhost:5173`, chọn **Nhân viên & QR** và giữ `demo-credential`. Nhập mã HR vào phần đăng ký, bấm **Đăng ký thiết bị** và sao chép mã do Edge cấp. Mỗi lần đăng ký mới thay thế mã đăng ký trước đó.
+2. Mở `http://localhost:5173/employee`, nhập `demo-credential`, mã đăng nhập nhân viên và mã đăng ký. Bấm **Hiển thị QR**. QR dùng tiền tố `tmc1:`, hết hạn sau khoảng 30 giây và được làm mới khi còn khoảng 8 giây.
+3. Mở `http://localhost:5173/gate`, chọn `SITE-1 / GATE-1`, chọn chiều và mở camera laptop. Mỗi lần mở camera đọc một mã. Nếu chưa có camera, bấm **Nhập tay token**. Console cũ vẫn hỗ trợ tải ảnh QR và **Quét mã vừa cấp**.
+4. Mở `http://localhost:5173/stations` để xem registry. Admin quản lý trạm của Edge đang chọn. Bảo vệ xem trạm được giao. Trạm `DISABLED` bị từ chối xác minh. Để kiosk chọn được trạm mới, thêm cặp site/trạm và URL Edge vào `VITE_EDGES`.
+5. Ở **Chấm công & HR**, nhập mã HR, tải bản ghi sau khi worker xử lý outbox và chọn tháng để tải CSV.
+
+### Điện thoại hiển thị QR qua LAN
+
+Ví dụ IP LAN của laptop là `192.168.1.25`. Dùng cùng Wi-Fi và thay IP trong các lệnh dưới đây bằng IP laptop. Dùng tài khoản và dữ liệu mẫu trên mạng tin cậy vì HTTP truyền mã demo dưới dạng rõ.
+
+- Trong terminal backend, trước khi chạy, đặt `$env:SERVER_ADDRESS = '0.0.0.0'` và `$env:TMC_CORS_ORIGINS = 'http://localhost:5173,http://192.168.1.25:5173'`.
+- Trong terminal frontend, đặt `$env:VITE_EDGE_API_URL = 'http://192.168.1.25:8080'` và chạy `npm run dev -- --host 0.0.0.0 --strictPort`. Nếu firewall chặn, cho phép TCP 5173 và 8080 trên mạng riêng.
+- Trên điện thoại mở `http://192.168.1.25:5173/employee`. Trên laptop mở `http://localhost:5173/gate` để trình duyệt cấp quyền camera. Hai trang dùng cùng Edge.
+
+### Điện thoại làm máy quét qua HTTPS
+
+Với **mkcert**, giữ backend ở loopback và đặt `TMC_CORS_ORIGINS=https://localhost:5173,https://192.168.1.25:5173` trước khi chạy backend. Trong `frontend/`, dùng chứng chỉ chứa IP LAN của laptop và cho điện thoại tin cậy `rootCA.pem` từ thư mục `mkcert -CAROOT`. Chỉ chuyển chứng chỉ CA công khai sang điện thoại. [Hướng dẫn mkcert cho thiết bị di động](https://github.com/FiloSottile/mkcert#mobile-devices)
+
+```powershell
+mkcert -install
+mkcert -cert-file dev-cert.pem -key-file dev-key.pem localhost 127.0.0.1 192.168.1.25
+$env:VITE_EDGE_API_URL = '/edge-api'
+$env:TMC_DEV_PROXY_TARGET = 'http://127.0.0.1:8080'
+$env:TMC_DEV_HTTPS_CERT = (Resolve-Path dev-cert.pem).Path
+$env:TMC_DEV_HTTPS_KEY = (Resolve-Path dev-key.pem).Path
+npm run dev -- --host 0.0.0.0 --strictPort
+```
+
+Mở `https://192.168.1.25:5173/gate` trên điện thoại. Trình duyệt gọi API qua proxy cùng origin `/edge-api`.
+
+Với **cloudflared**, dùng cùng proxy `/edge-api` và giữ Vite ở HTTP loopback. Tạo ứng dụng Cloudflare Access giới hạn người dùng demo, sau đó trỏ hostname đã bảo vệ đến `http://127.0.0.1:5173` qua tunnel. Đặt `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` bằng hostname đó cho Vite và `TMC_CORS_ORIGINS` bằng origin HTTPS cho Edge. Mở `https://<hostname>/gate` sau khi đăng nhập Access. [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/get-started/) · [Bảo vệ ứng dụng bằng Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
+
+### Demo hai nhà máy
+
+Trong cùng terminal backend đã đặt các mã demo, đóng gói JAR và chạy ba tiến trình. Script dùng khóa ES256 demo chung cho BD và LA để cùng token có thể được xác minh tại cả hai Edge.
+
+```powershell
+cd backend
+.\mvnw.cmd -DskipTests package
+.\scripts\start-multisite.ps1
+```
+
+| Tiến trình | Địa chỉ | Dữ liệu |
+| --- | --- | --- |
+| `bd` | `localhost:8081` · `SITE-BD / BD-G01` | `data/tmc-edge-bd` |
+| `la` | `localhost:8082` · `SITE-LA / LA-G01` | `data/tmc-edge-la` |
+| Central mô phỏng | `localhost:8090` | Bộ nhớ tiến trình |
+
+Trong frontend, đặt `VITE_EDGE_API_URL=http://localhost:8081` và bật dòng `VITE_EDGES` trong `frontend/.env.example` ở tệp `.env`. Khởi động lại Vite, đăng ký thiết bị trên BD và dùng menu site ở kiosk. Để kiểm tra tự động trên ba tiến trình đang chạy, đặt `TMC_EMPLOYEE_DEMO_TOKEN` và `TMC_DEVICE_PROOF` của BD trong terminal mới rồi chạy `node scripts/check-multisite.mjs` từ `backend/`. Script xác minh cùng token tại hai Edge và đợi Central ghi nhận `SUSPICIOUS` từ outbox. Có thể chạy `.\scripts\start-multisite.ps1 -Check` khi ba cổng đang trống để tự khởi động, kiểm tra bằng H2 trong bộ nhớ và dừng các tiến trình.
+
+### Kịch bản demo
+
+Để giữ nguyên một token cho các kịch bản nhập tay, cấp token qua API bằng mã đăng ký đã có. Ví dụ dưới đây dùng Edge đơn. Với BD, đổi cổng thành 8081.
+
+```powershell
+$edge = 'http://localhost:8080'
+$env:TMC_DEVICE_PROOF = '<mã đăng ký do HR cấp>'
+$headers = @{
+  Authorization = "Bearer $env:TMC_EMPLOYEE_DEMO_TOKEN"
+  'X-Device-Proof' = $env:TMC_DEVICE_PROOF
+}
+$issued = Invoke-RestMethod -Method Post -Uri "$edge/qr/v1/tokens" -Headers $headers -ContentType 'application/json' -Body '{"credentialId":"demo-credential"}'
+$issued.token
+```
+
+| Kịch bản | Thao tác và kết quả |
+| --- | --- |
+| Hợp lệ | Quét mã mới ở đúng site, đúng chiều. Kiosk hiện `ALLOW`. Sau lượt vào, dùng mã mới để quét ra nếu cần thử lượt vào tiếp theo. |
+| Hết hạn | Giữ token API chưa dùng, đợi quá TTL và dung sai đồng hồ khoảng 5 giây. Nhập lại ở kiosk để nhận `TOKEN_EXPIRED`. |
+| Replay | Dùng lại cùng token tại cùng site trước khi hết hạn. Kiosk gửi event ID mới và nhận `REPLAY`. |
+| Thu hồi | Cấp token mới, giữ token rồi dùng mã HR chọn **Thu hồi credential** trong console. Kiosk từ chối token còn hạn với `REVOKED`. Trang nhân viên hiện `REVOKED` ở lần làm mới kế tiếp. Dùng DB demo riêng để lần sau vẫn còn credential mẫu đang hoạt động. |
+| Sai thiết bị | Xin QR bằng mã đăng ký của thiết bị khác để nhận HTTP 403 với `DEVICE_MISMATCH`. Hoặc nhập token hợp lệ ở kiosk và điền Device ID khác để nhận `DENY / DEVICE_MISMATCH`. |
+| Hai site | Chạy script hai site. Kết quả mong đợi là `BD ALLOW, LA ALLOW, Central SUSPICIOUS`. |
+
+### Deviations
+
+- Phase 1 giao Central cấp token và Edge xác minh. Demo ký và cấp token ngay trên Edge. Hai profile dùng chung khóa ký demo. Registry, credential, thu hồi và đăng ký thiết bị lưu cục bộ từng Edge.
+- Bearer cấu hình và mã đăng ký ngẫu nhiên là cơ chế demo. Edge lưu hash của mã đăng ký. Cơ chế này chưa tích hợp OIDC, khóa thiết bị không thể xuất hoặc xác thực trạm bằng mTLS.
+- Turnstile, cảm biến mặc định, ACK HR và Central receiver vẫn ở mức mô phỏng. Central lưu trạng thái đối soát trong bộ nhớ. Tín hiệu `SUSPICIOUS` ở Central không tự chỉnh bản ghi chấm công đã lưu tại Edge. Registry để trống heartbeat khi chưa có thiết bị gửi dữ liệu.
+- Sinh trắc mặc định tắt. Có port và fake để kiểm thử ba kết quả. [ADR xác minh khuôn mặt](docs/adr/face-verification.md)
 
 ## Chạy kiểm thử
 

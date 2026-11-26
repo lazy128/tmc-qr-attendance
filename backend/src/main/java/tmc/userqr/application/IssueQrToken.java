@@ -39,7 +39,7 @@ public final class IssueQrToken {
     this.keyId = keyId;
   }
 
-  public String issue(String credentialId, String deviceHash) {
+  public IssuedToken issue(String credentialId, String deviceHash) {
     Credential credential = reader.getCredential(credentialId)
         .orElseThrow(() -> new IllegalArgumentException("credential not found"));
     if (!credential.active()) {
@@ -49,18 +49,22 @@ public final class IssueQrToken {
       throw new IllegalArgumentException("device binding does not match");
     }
     var now = clock.now();
-    return signer.sign(new Claims(
+    var expiresAt = now.plus(ttl).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    String token = signer.sign(new Claims(
         issuer,
         audience,
         credential.id(),
         ids.next(),
         now,
         now,
-        now.plus(ttl),
+        expiresAt,
         credential.version(),
         deviceHash,
         keyId,
         null
     ));
+    return new IssuedToken(token, expiresAt);
   }
+
+  public record IssuedToken(String token, java.time.Instant expiresAt) {}
 }
