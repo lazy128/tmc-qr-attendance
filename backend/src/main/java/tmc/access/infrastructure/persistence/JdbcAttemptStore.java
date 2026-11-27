@@ -75,9 +75,11 @@ public final class JdbcAttemptStore
             SELECT EXISTS (SELECT 1 FROM access_attempt
               WHERE site_id=? AND employee_id=? AND attendance_gate=TRUE AND command_state IN ('SENT','UNKNOWN'))
             """, Boolean.class, attempt.siteId().value(), attempt.employeeId()));
-        if (attempt.attendanceGate() && (pendingCommand
-            || !presence.allowed(attempt.siteId().value(), attempt.employeeId(), attempt.direction()))) {
-          throw new AntiPassbackException();
+        if (attempt.attendanceGate()) {
+          if (pendingCommand) throw new AntiPassbackException();
+          var denial = presence.denial(attempt.siteId().value(), attempt.employeeId(),
+              attempt.direction(), attempt.scannedAt());
+          if (denial != null) throw new AntiPassbackException(denial);
         }
         insertAttempt(attempt, jti);
         jdbc.update(

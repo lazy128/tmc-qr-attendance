@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import tmc.access.domain.Direction;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.port.TokenSigner;
 import tmc.access.domain.port.TokenValidator;
@@ -43,6 +44,7 @@ public final class Es256TokenCodec implements TokenSigner, TokenValidator {
       payload.put("exp", claims.expiresAt().getEpochSecond());
       payload.put("cver", claims.version());
       payload.put("did", claims.deviceHash());
+      if (claims.attendanceDirection() != null) payload.put("dir", claims.attendanceDirection().name());
       String body = encode(json.writeValueAsBytes(header)) + "." + encode(json.writeValueAsBytes(payload));
       Signature signature = Signature.getInstance("SHA256withECDSA");
       signature.initSign(key);
@@ -87,7 +89,8 @@ public final class Es256TokenCodec implements TokenSigner, TokenValidator {
           payload.path("cver").asInt(),
           payload.path("did").asText(),
           kid,
-          null
+          null,
+          payload.has("dir") ? Direction.valueOf(payload.path("dir").asText()) : null
       );
     } catch (Exception failed) {
       throw new IllegalArgumentException("invalid token", failed);

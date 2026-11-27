@@ -3,7 +3,9 @@ package tmc.shared;
 import java.util.List;
 
 public final class WorkplaceSites {
-  public record Site(String id, String name, String entryStation) {}
+  public record Site(String id, String name, String entryStation) {
+    public String exitStation() { return entryStation + "-OUT"; }
+  }
 
   public static final List<Site> ALL = List.of(
       new Site("SITE-BD", "Bình Dương", "BD-G01"),

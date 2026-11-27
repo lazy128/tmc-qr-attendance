@@ -12,6 +12,7 @@ Cần **Java 21** và **Node.js 24**. Profile mặc định `workplace` lưu d�
 
 ~~~powershell
 # Terminal backend, chạy từ thư mục gốc
+$env:TMC_TRUST_LOOPBACK_PROXY = 'true'
 .\backend\scripts\start-workplace.ps1 -Initialize -AllowHttp
 ~~~
 
@@ -29,28 +30,42 @@ Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoả
 
 | Vai trò | Màn hình và quyền |
 | --- | --- |
-| Nhân viên | Mở **Mã QR của tôi** và xem bảng công của mình. |
-| Quản lý | Mở QR của mình và xem bảng công trong cùng bộ phận, nhà máy. |
-| Bảo vệ | Quét QR tại đúng trạm được gán. Hướng vào hoặc ra lấy từ cấu hình trạm. |
+| Nhân viên | Mở **Chấm công cá nhân** để hiện QR riêng, xác nhận bằng điện thoại và xem bảng công của mình. |
+| Quản lý | Chấm công cá nhân và xem bảng công trong cùng bộ phận, nhà máy. |
+| Bảo vệ | Hiện QR cho nhân viên quét hoặc quét mã cá nhân tại đúng trạm được gán. |
 | Nhân sự | Xem bảng công, bổ sung giờ ra kèm lý do và xuất CSV hoặc XLSX theo tháng. |
 | Quản trị viên | Quản lý tài khoản và trạm theo nhà máy. Dùng **Bảng công & Excel** để xem, bổ sung giờ ra và tải Excel hoặc CSV theo bộ lọc. |
 
-### Quét bằng hai thiết bị
+### Chấm công bằng QR cá nhân
 
-Đăng nhập Nhân viên trên thiết bị hiển thị mã và Bảo vệ trên thiết bị quét. Hai thiết bị cần truy cập cùng địa chỉ ứng dụng. Trạm hỗ trợ camera trực tiếp, ảnh QR và mở liên kết QR bằng Camera của điện thoại. Khi mở liên kết, bảo vệ xác nhận tại trạm đã gán. Trang nhân viên tự cập nhật sau khi Edge lưu lượt công.
+Đăng nhập nhân viên trên máy tính và mở **Chấm công cá nhân**. Màn hình hiển thị **Mã QR của tôi**. Trên điện thoại, dùng cùng tài khoản nhân viên và mở liên kết từ Camera, hoặc quét bằng mục **Quét QR chấm công**. Máy chủ kiểm tra chủ mã, thời hạn và trạng thái chấm công. Khi ghi giờ vào thành công, điện thoại hiện kết quả và máy tính thay QR bằng **Đã xác nhận chấm công**.
+
+Cuối ca, bấm **Mở QR giờ ra** trên máy tính rồi quét bằng điện thoại. Mã có hướng giờ ra được ký và ghi ở cổng ra của chi nhánh. Sau khi ghi giờ ra, trang hiển thị giờ vào, giờ ra và trạng thái **Đã kết thúc ngày công**. Khi sang ngày công mới lúc 06:00 giờ Việt Nam theo mặc định, màn hình tự chuyển về QR giờ vào mới. Ca trước quên quét ra được giữ ở trạng thái thiếu giờ ra để đối chiếu.
+
+Chi nhánh chấm công lấy từ hồ sơ do quản trị viên cấp. Khi cần bảo vệ xác nhận tại trạm, nhân viên chọn **Mở QR cho bảo vệ quét** và đưa mã cho bảo vệ ở chi nhánh được phân công.
+
+Mã cá nhân có hiệu lực 3 phút và mỗi mã chỉ ghi một lượt. Luồng này xác thực tài khoản và mã, nên người có quyền truy cập cùng tài khoản vẫn có thể quét mã từ xa. Dùng quy trình xác minh tại cổng khi cần đối chiếu người có mặt.
+
+### Quét QR tại cổng
+
+Trên màn hình tại cổng, quản trị viên chọn **Quản trị → Trạm quét → Hiện mã tại cổng** ở dòng cổng vào hoặc ra. Bảo vệ cũng có thể hiện QR ở trạm được giao. Trên điện thoại, nhân viên đăng nhập tài khoản của mình, vào **Chấm công cá nhân → Quét QR chấm công** và quét mã. Nếu mở liên kết từ Camera của điện thoại, bấm **Xác nhận chấm công**. Các phiên đang mở trên máy khác tự cập nhật sau khi lượt công được lưu.
+
+Mã cổng đổi tự động và có hiệu lực 30 giây kể từ lúc phát. Mã ràng buộc với cơ sở, trạm và hướng đã cấu hình. Máy chủ lấy nhân viên từ phiên đăng nhập và ghi tối đa một lượt cho mỗi nhân viên với cùng mã cổng. Một ảnh mã cổng được gửi đi trong thời hạn vẫn có thể được dùng từ xa bởi tài khoản cùng cơ sở. Khi cần xác minh người có mặt, bảo vệ đối chiếu thẻ và dùng chức năng quét mã cá nhân tại trạm.
 
 - Với HTTPS, cấu hình chứng chỉ thông qua `TMC_DEV_HTTPS_CERT` và `TMC_DEV_HTTPS_KEY`, rồi để cookie ở chế độ bảo mật mặc định. Thiết bị quét phải tin cậy chứng chỉ. Dùng `npm run dev -- --host 0.0.0.0 --strictPort` để mở ứng dụng trong mạng nội bộ.
 - Khi kiểm tra qua Wi‑Fi riêng với HTTP, đặt `-FrontendOrigin 'http://192.168.1.25:5173'` và `-AllowHttp` ở backend, dùng IP LAN thật. Trình duyệt trên điện thoại có thể **Chụp mã QR** hoặc mở liên kết đọc bởi Camera. `VITE_QR_SCAN_ORIGIN` đặt cùng địa chỉ nếu màn hình nhân viên được mở qua localhost.
 - Khi triển khai, phục vụ ứng dụng và proxy `/edge-api` trên cùng origin HTTPS, giữ backend ở mạng riêng và khai báo origin đó trong `TMC_CORS_ORIGINS`.
 
-Trong **Mã QR của tôi → Hoạt động tài khoản**, nhân viên xem giờ, cơ sở và cổng của các lượt chấm công gần đây, cùng thời điểm và loại trình duyệt của các lần đăng nhập mới. **Đăng xuất phiên khác** giữ phiên hiện tại, đóng các phiên còn lại và thu hồi mã QR đã phát. Nếu nghi lộ mật khẩu, hãy đổi mật khẩu để ngăn đăng nhập lại. Lịch sử đăng nhập ghi nhận phiên sử dụng tài khoản. Bảo vệ đối chiếu người có mặt với thông tin nhân viên tại cổng.
+Trong **Chấm công cá nhân → Hoạt động tài khoản**, nhân viên xem giờ, cơ sở và cổng của các lượt chấm công gần đây, cùng thời điểm và loại trình duyệt của các lần đăng nhập mới. **Đăng xuất phiên khác** giữ phiên hiện tại, đóng các phiên còn lại và thu hồi mã QR cá nhân đã phát. Nếu nghi lộ mật khẩu, hãy đổi mật khẩu để ngăn đăng nhập lại.
+
+Trong **Lịch sử đăng nhập**, đặt tên thiết bị trên từng trình duyệt, ví dụ **iPhone của An**. Lịch sử hiển thị tên, loại trình duyệt, mã nhận diện, IP lúc đăng nhập và trạng thái phiên. IP có thể dùng chung hoặc thay đổi. Các phiên cũ chưa ghi IP sẽ hiển thị thông tin đã lưu. Chỉ bật `TMC_TRUST_LOOPBACK_PROXY` khi backend đi qua proxy nội bộ đáng tin cậy, như Vite trên cùng máy.
 
 ### Xử lý sự cố và kiểm soát dữ liệu
 
 - **Mất mạng.** Trạm hiển thị lượt chờ. Khi kết nối lại, Kiosk gửi đúng dữ liệu với cùng `eventId`, kể cả khi phản hồi đầu tiên bị mất. Nếu tải lại trang, chỉ mã lượt được giữ trong phiên tab để tra kết quả đã lưu. Trường hợp máy chủ chưa nhận mã trước khi hết hạn, bảo vệ quét mã mới. Giờ công dùng giờ Edge nhận lượt.
 - **Quét đồng thời.** Các trạm gửi độc lập. DB giữ kết quả theo `eventId`, chặn dùng lại JWT theo `(site_id, jti)`, khóa theo thông tin xác thực khi ghi và kiểm tra lại trạng thái vào/ra trước khi chốt. Một lượt có thể được gửi lại nhiều lần nhưng chỉ được ghi một lần.
-- **Đúng nhân viên.** API cấp QR lấy nhân viên từ phiên đăng nhập. API quét kiểm tra vai trò Bảo vệ và chính xác trạm được giao. Kiosk hiện tên nhân viên đã xác minh để đối chiếu tại cổng.
-- **JWT.** Phiên đăng nhập dùng JWT HS256 trong cookie `HttpOnly`, `SameSite=Strict` và mặc định `Secure`. DB kiểm tra phiên còn hiệu lực. Đổi mật khẩu, đặt lại mật khẩu và khóa tài khoản thu hồi các phiên liên quan. Mật khẩu được lưu dưới dạng BCrypt. QR dùng JWT ES256 có thời hạn 30 giây và phiên bản thẻ.
+- **Đúng nhân viên.** Lượt tự quét lấy danh tính từ tài khoản trên điện thoại và kiểm tra chữ ký QR của cổng. Với lượt quét mã cá nhân, API kiểm tra vai trò bảo vệ và trạm được giao. Kiosk hiện tên nhân viên để đối chiếu tại cổng.
+- **JWT.** Phiên đăng nhập dùng JWT HS256 trong cookie `HttpOnly`, `SameSite=Strict` và mặc định `Secure`. DB kiểm tra phiên còn hiệu lực. Đổi mật khẩu, đặt lại mật khẩu và khóa tài khoản thu hồi các phiên liên quan. Mật khẩu được lưu dưới dạng BCrypt. QR cá nhân dùng JWT ES256 và phiên bản thẻ. QR cổng dùng JWT HS256 với khóa dẫn xuất và loại token riêng.
 - **DB.** Hồ sơ, tài khoản, phiên, trạm, lượt quét, chấm công và nhật ký được lưu trong H2 dạng tệp. Sao lưu tệp DB khi backend đã dừng. Script tạo khóa phiên ở `backend/data/workplace-session.key`. Giữ khóa và bản sao DB riêng tư. Bảng tính được tạo từ chấm công đã lưu và ghi ra `backend/exports/workplace`.
 - **Phạm vi chạy.** Bình Dương và Long An dùng chung một Edge và một DB trong bản nộp. Trạm, quyền quét và báo cáo phân theo nhà máy. Điều khiển turnstile vật lý và đồng bộ nhiều Edge là phần tích hợp riêng.
 

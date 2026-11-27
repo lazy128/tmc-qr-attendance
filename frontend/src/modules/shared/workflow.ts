@@ -7,12 +7,31 @@ export type AttendanceStatus = {
   status: "NOT_ENTERED" | "IN_SHIFT" | "LEFT";
   lastEntry: string | null;
   lastExit: string | null;
+  workDate: string;
 };
 export type Pass = AttendanceStatus & { token: string; expiresAt: string };
+export type Direction = "ENTRY" | "EXIT";
+export type StationCheckIn = {
+  direction: Direction;
+  decision: "ALLOW" | "DENY";
+  reasonCode: string | null;
+  command: string;
+  scannedAt: string;
+};
+export type StationCode = { code: string; expiresAt: string };
 export type EmployeeActivity = {
   employeeId: string;
   otherSessions: number;
-  recentLogins: { signedInAt: string; deviceLabel: string; current: boolean; active: boolean }[];
+  currentDeviceName: string | null;
+  recentLogins: {
+    signedInAt: string;
+    deviceLabel: string;
+    deviceName: string | null;
+    deviceCode: string | null;
+    clientIp: string | null;
+    current: boolean;
+    active: boolean;
+  }[];
   scans: {
     eventId: string;
     scannedAt: string;
@@ -78,6 +97,8 @@ export const accountApi = {
   logout: () => request<void>("/auth/v1/logout", { method: "POST" }),
   closeOtherSessions: () =>
     request<{ closed: number }>("/auth/v1/sessions/close-others", { method: "POST" }),
+  nameDevice: (name: string) =>
+    request<void>("/auth/v1/device-name", { method: "PATCH", body: JSON.stringify({ name }) }),
   password: (current: string, replacement: string) =>
     request<void>("/auth/v1/password", {
       method: "POST",
@@ -98,12 +119,37 @@ export const accountApi = {
 
 export const workflow = {
   employee: (signal: AbortSignal) => request<Employee>("/workplace/v1/me/employee", { signal }),
-  pass: (signal: AbortSignal) => request<Pass>("/workplace/v1/me/qr", { method: "POST", signal }),
+  pass: (signal: AbortSignal, direction?: Direction) =>
+    request<Pass>("/workplace/v1/me/qr", {
+      method: "POST",
+      signal,
+      ...(direction ? { body: JSON.stringify({ direction }) } : {}),
+    }),
   attendance: (signal: AbortSignal) =>
     request<AttendanceStatus>("/workplace/v1/me/attendance", { signal }),
   activity: (signal: AbortSignal) =>
     request<EmployeeActivity>("/workplace/v1/me/activity", { signal }),
   station: (signal: AbortSignal) => request<Station>("/workplace/v1/station", { signal }),
+  stationCode: (stationId: string, direction: Direction, signal: AbortSignal) =>
+    request<StationCode>(
+      `/workplace/v1/stations/${encodeURIComponent(stationId)}/qr/${direction}`,
+      {
+        method: "POST",
+        signal,
+      },
+    ),
+  checkIn: (code: string, signal: AbortSignal) =>
+    request<StationCheckIn>("/workplace/v1/me/check-in", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+      signal,
+    }),
+  personalCheckIn: (code: string, signal: AbortSignal) =>
+    request<StationCheckIn>("/workplace/v1/me/check-in/personal", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+      signal,
+    }),
   stations: (signal: AbortSignal) =>
     request<{ stations: Station[]; canManage: boolean; siteId: string; siteIds: string[] }>(
       "/admin/v1/stations",

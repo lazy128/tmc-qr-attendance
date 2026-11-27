@@ -15,7 +15,7 @@ Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose
 | `TMC_SESSION_SECURE`, `TMC_CORS_ORIGINS` | Cookie mặc định Secure. Đặt origin chính xác và chỉ tắt Secure khi kiểm tra HTTP cục bộ. |
 | `TMC_DB_USERNAME`, `TMC_DB_PASSWORD` | Thông tin kết nối H2 dạng tệp. Mặc định `sa` với mật khẩu trống cho máy cá nhân. |
 | `tmc.edge.site`, `tmc.edge.station` | Nhà máy mặc định là `SITE-BD`, với `BD-G01` và `BD-G01-OUT`. Long An có `LA-G01` và `LA-G01-OUT`. |
-| `tmc.qr.ttl-seconds`, `tmc.qr.keystore` | QR hiệu lực 30 giây. Có thể cấu hình PKCS#12 và mật khẩu qua `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 khi khởi động lại. QR đã phát trước khi đổi khóa cần được cấp mới. |
+| `tmc.qr.ttl-seconds`, `tmc.qr.keystore` | QR cá nhân có hiệu lực 180 giây với profile `workplace`. Có thể cấu hình PKCS#12 và mật khẩu qua `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 khi khởi động lại. QR đã phát trước khi đổi khóa cần được cấp mới. |
 
 ## API bản nộp
 

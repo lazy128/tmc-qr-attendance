@@ -37,6 +37,7 @@ public final class AccessStates {
     CVER_MISMATCH,
     DEVICE_MISMATCH,
     ANTI_PASSBACK,
+    SHIFT_COMPLETED,
     STATION_SCOPE,
     ZONE_DENIED,
     OUTSIDE_SHIFT,

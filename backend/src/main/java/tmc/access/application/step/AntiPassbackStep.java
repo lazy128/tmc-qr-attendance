@@ -4,7 +4,6 @@ import tmc.access.application.AccessContext;
 import tmc.access.application.StepResult;
 import tmc.access.application.VerificationStep;
 import tmc.access.domain.AccessRequest;
-import tmc.access.domain.AccessStates.Reason;
 import tmc.access.domain.port.PresenceTracker;
 
 public final class AntiPassbackStep implements VerificationStep {
@@ -26,8 +25,9 @@ public final class AntiPassbackStep implements VerificationStep {
 
   @Override
   public StepResult execute(AccessRequest request, AccessContext context) {
-    return !context.attendanceGate || presence.allowed(request.siteId().value(), context.employeeId, request.direction())
-        ? StepResult.ok()
-        : StepResult.deny(Reason.ANTI_PASSBACK);
+    if (!context.attendanceGate) return StepResult.ok();
+    var denial = presence.denial(request.siteId().value(), context.employeeId,
+        request.direction(), request.scannedAt());
+    return denial == null ? StepResult.ok() : StepResult.deny(denial);
   }
 }

@@ -23,6 +23,12 @@ export default defineConfig(({ mode }) => {
       changeOrigin: true,
       rewrite: (path) => path.slice("/edge-api".length),
       configure: (proxy) => {
+        proxy.on("proxyReq", (outgoing, incoming) => {
+          outgoing.removeHeader("X-TMC-Client-IP");
+          if (incoming.socket.remoteAddress) {
+            outgoing.setHeader("X-TMC-Client-IP", incoming.socket.remoteAddress);
+          }
+        });
         if (!server.https) return;
         // The local backend also serves loopback HTTP. Cookies on the HTTPS side stay Secure.
         proxy.on("proxyRes", (response) => {

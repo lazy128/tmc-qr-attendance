@@ -2,6 +2,7 @@ package tmc.userqr.application;
 
 import java.time.Duration;
 import java.util.Objects;
+import tmc.access.domain.Direction;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.port.Credential;
 import tmc.access.domain.port.CredentialReader;
@@ -40,6 +41,10 @@ public final class IssueQrToken {
   }
 
   public IssuedToken issue(String credentialId, String deviceHash) {
+    return issue(credentialId, deviceHash, null);
+  }
+
+  public IssuedToken issue(String credentialId, String deviceHash, Direction attendanceDirection) {
     Credential credential = reader.getCredential(credentialId)
         .orElseThrow(() -> new IllegalArgumentException("credential not found"));
     if (!credential.active()) {
@@ -61,7 +66,8 @@ public final class IssueQrToken {
         credential.version(),
         deviceHash,
         keyId,
-        null
+        null,
+        attendanceDirection
     ));
     return new IssuedToken(token, expiresAt);
   }

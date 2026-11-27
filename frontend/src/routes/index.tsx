@@ -20,8 +20,8 @@ function Index() {
             {account.employeeId && (
               <Link to="/employee" className="workflow-card">
                 <Smartphone />
-                <strong>Mã QR của tôi</strong>
-                <span>Mở mã để chấm công vào hoặc ra.</span>
+                <strong>Chấm công cá nhân</strong>
+                <span>Mở QR cá nhân để quét bằng điện thoại.</span>
               </Link>
             )}
             {account.role === "GUARD" && (

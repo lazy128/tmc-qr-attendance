@@ -86,9 +86,11 @@ export function useAuth() {
 
 export function RequireAccount({
   roles,
+  loginHint = "",
   children,
 }: {
   roles?: Role[];
+  loginHint?: string;
   children: (account: Account) => ReactNode;
 }) {
   const { account, loading, failure, refresh } = useAuth();
@@ -103,7 +105,9 @@ export function RequireAccount({
       </section>
     );
   if (!account || account.changeRequired)
-    return <AccountForm key={account?.username ?? "login"} change={Boolean(account)} />;
+    return (
+      <AccountForm key={account?.username ?? "login"} change={Boolean(account)} hint={loginHint} />
+    );
   if (roles && !roles.includes(account.role))
     return (
       <section className="workflow-card workflow-login">
@@ -116,7 +120,15 @@ export function RequireAccount({
   return children(account);
 }
 
-export function AccountForm({ change, cancel }: { change: boolean; cancel?: () => void }) {
+export function AccountForm({
+  change,
+  hint,
+  cancel,
+}: {
+  change: boolean;
+  hint?: string;
+  cancel?: () => void;
+}) {
   const { setAccount } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -146,6 +158,7 @@ export function AccountForm({ change, cancel }: { change: boolean; cancel?: () =
   return (
     <form className="workflow-card workflow-login" onSubmit={submit}>
       <h2>{change ? "Đổi mật khẩu" : "Đăng nhập"}</h2>
+      {!change && hint && <p>{hint}</p>}
       {change ? (
         <p>Đặt mật khẩu riêng và đăng nhập lại để tiếp tục.</p>
       ) : (

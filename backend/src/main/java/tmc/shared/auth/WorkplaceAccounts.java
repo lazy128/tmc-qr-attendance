@@ -57,7 +57,7 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
     this.sessionLifetime = sessionLifetime;
   }
 
-  public Optional<Login> login(String rawUsername, String password, String deviceLabel) {
+  public Optional<Login> login(String rawUsername, String password, String deviceLabel, String deviceId, String clientIp) {
     if (rawUsername == null || !validPasswordLength(password, 1)) return Optional.empty();
     String username = rawUsername.toLowerCase(Locale.ROOT).strip();
     if (!username.matches("[a-z0-9][a-z0-9._-]{2,59}")) return Optional.empty();
@@ -85,8 +85,11 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       var expiry = now.plus(sessionLifetime).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
       var id = UUID.randomUUID().toString();
       jdbc.update("INSERT INTO workplace_session VALUES (?,?,?,?)", id, username, authentication.version(), utc(expiry));
-      jdbc.update("INSERT INTO workplace_login_history(session_id,username,signed_in_at,device_label) VALUES (?,?,?,?)",
-          id, username, utc(now), deviceLabel);
+      rememberDevice(username, deviceId);
+      jdbc.update("""
+          INSERT INTO workplace_login_history(session_id,username,signed_in_at,device_label,device_id,client_ip)
+          VALUES (?,?,?,?,?,?)
+          """, id, username, utc(now), deviceLabel, deviceId, clientIp);
       return Optional.of(new Login(account(username).orElseThrow(), tokens.issue(username, id, now, expiry), sessionLifetime));
     });
   }
@@ -119,14 +122,60 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
           SELECT COUNT(*) FROM workplace_session WHERE username=? AND session_id<>? AND expires_at>?
           """, Integer.class, token.username(), token.id(), utc(now));
       var recent = jdbc.query("""
-          SELECT h.session_id, h.signed_in_at, h.device_label, s.session_id IS NOT NULL AS active
+          SELECT h.session_id, h.signed_in_at, h.device_label, h.device_id, h.client_ip, d.display_name,
+                 s.session_id IS NOT NULL AS active
           FROM workplace_login_history h LEFT JOIN workplace_session s ON s.session_id=h.session_id AND s.expires_at>?
+          LEFT JOIN workplace_browser_device d ON d.username=h.username AND d.device_id=h.device_id
           WHERE h.username=? ORDER BY h.signed_in_at DESC,h.session_id DESC LIMIT 10
           """, (row, index) -> new LoginEvent(row.getObject("signed_in_at", OffsetDateTime.class).toInstant(),
-          row.getString("device_label"), token.id().equals(row.getString("session_id")), row.getBoolean("active")),
+          row.getString("device_label"), row.getString("display_name"), deviceCode(row.getString("device_id")),
+          row.getString("client_ip"),
+          token.id().equals(row.getString("session_id")), row.getBoolean("active")),
           utc(now), token.username());
-      return new LoginActivity(others, recent);
+      var name = jdbc.query("""
+          SELECT d.display_name FROM workplace_login_history h
+          JOIN workplace_browser_device d ON d.username=h.username AND d.device_id=h.device_id
+          WHERE h.username=? AND h.session_id=?
+          """, row -> row.next() ? row.getString(1) : null, token.username(), token.id());
+      return new LoginActivity(others, recent, name);
     });
+  }
+
+  public Optional<String> nameCurrentDevice(String authorization, String candidateId, String deviceLabel, String name) {
+    String label = input(name, "tên thiết bị", 60);
+    if (label.codePoints().anyMatch(Character::isISOControl)) {
+      throw new IllegalArgumentException("Tên thiết bị chứa ký tự không hợp lệ.");
+    }
+    return tokens.verify(authorization, clock.now()).flatMap(token -> tx.execute(status -> {
+      jdbc.queryForObject("SELECT username FROM workplace_account WHERE username=? FOR UPDATE", String.class, token.username());
+      if (session(authorization).filter(account -> !account.changeRequired()).isEmpty()) return Optional.empty();
+      String boundId = jdbc.query("SELECT device_id FROM workplace_login_history WHERE session_id=? AND username=?",
+          row -> row.next() ? row.getString(1) : null, token.id(), token.username());
+      String deviceId = boundId == null ? candidateId : boundId;
+      rememberDevice(token.username(), deviceId);
+      jdbc.update("UPDATE workplace_browser_device SET display_name=? WHERE username=? AND device_id=?",
+          label, token.username(), deviceId);
+      if (boundId == null) {
+        int updated = jdbc.update("UPDATE workplace_login_history SET device_id=? WHERE session_id=? AND username=?",
+            deviceId, token.id(), token.username());
+        if (updated == 0) {
+          jdbc.update("INSERT INTO workplace_login_history(session_id,username,signed_in_at,device_label,device_id) VALUES (?,?,?,?,?)",
+              token.id(), token.username(), utc(token.issuedAt()), deviceLabel, deviceId);
+        }
+      }
+      return Optional.of(deviceId);
+    }));
+  }
+
+  private void rememberDevice(String username, String deviceId) {
+    jdbc.update("""
+        INSERT INTO workplace_browser_device(username,device_id)
+        SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM workplace_browser_device WHERE username=? AND device_id=?)
+        """, username, deviceId, username, deviceId);
+  }
+
+  private static String deviceCode(String deviceId) {
+    return deviceId == null ? null : deviceId.substring(0, 8).toUpperCase(Locale.ROOT);
   }
 
   public Optional<Integer> closeOtherSessions(String authorization) {
@@ -275,8 +324,9 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
   public record Account(String username, String displayName, Role role, String employeeId, String stationId, String siteId,
       boolean enabled, boolean changeRequired) {}
   public record Login(Account account, String token, Duration lifetime) {}
-  public record LoginEvent(Instant signedInAt, String deviceLabel, boolean current, boolean active) {}
-  public record LoginActivity(int otherSessions, List<LoginEvent> recentLogins) {}
+  public record LoginEvent(Instant signedInAt, String deviceLabel, String deviceName, String deviceCode, String clientIp,
+      boolean current, boolean active) {}
+  public record LoginActivity(int otherSessions, List<LoginEvent> recentLogins, String currentDeviceName) {}
   public record NewAccount(String username, String password, Role role, String employeeId, String fullName,
       String siteId, String departmentId, Group accessGroup, String shiftId, String stationId) {}
   private record LoginRecord(String hash, boolean enabled, int failures, OffsetDateTime lockedUntil, int version) {}

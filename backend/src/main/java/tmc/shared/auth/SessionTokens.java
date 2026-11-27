@@ -58,11 +58,11 @@ final class SessionTokens {
           || data.getExpirationTime() == null || !data.getExpirationTime().toInstant().isAfter(now)
           || data.getIssueTime() == null || data.getIssueTime().toInstant().isAfter(now)
           || data.getSubject() == null || data.getJWTID() == null) return Optional.empty();
-      return Optional.of(new Claims(data.getSubject(), data.getJWTID()));
+      return Optional.of(new Claims(data.getSubject(), data.getJWTID(), data.getIssueTime().toInstant()));
     } catch (ParseException | JOSEException invalid) {
       return Optional.empty();
     }
   }
 
-  record Claims(String username, String id) {}
+  record Claims(String username, String id, Instant issuedAt) {}
 }

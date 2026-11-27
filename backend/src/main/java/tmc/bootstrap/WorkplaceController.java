@@ -1,9 +1,14 @@
 package tmc.bootstrap;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
@@ -12,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.api.ApiError;
+import tmc.access.domain.Direction;
 import tmc.access.domain.port.CredentialReader;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.attendance.application.TimesheetCalculator;
@@ -40,6 +47,8 @@ import tmc.userqr.application.IssueQrToken;
 @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "true")
 public class WorkplaceController {
   private static final String AUTH = HttpHeaders.AUTHORIZATION;
+  private static final String DEVICE_COOKIE = "tmc_device";
+  private static final Duration DEVICE_COOKIE_LIFETIME = Duration.ofDays(365);
   private final WorkplaceAccounts accounts;
   private final CredentialReader credentials;
   private final IssueQrToken issue;
@@ -50,11 +59,13 @@ public class WorkplaceController {
   private final AuditWriter audit;
   private final ClockProvider clock;
   private final boolean secureCookie;
+  private final boolean trustLoopbackProxy;
 
   public WorkplaceController(WorkplaceAccounts accounts, CredentialReader credentials, IssueQrToken issue,
       JdbcStationRegistry stations, TimesheetService timesheets, JdbcAttendanceStore attendanceRecords,
       TimesheetCalculator calculator,
-      AuditWriter audit, ClockProvider clock, @Value("${tmc.accounts.cookie-secure:true}") boolean secureCookie) {
+      AuditWriter audit, ClockProvider clock, @Value("${tmc.accounts.cookie-secure:true}") boolean secureCookie,
+      @Value("${tmc.accounts.trust-loopback-proxy:false}") boolean trustLoopbackProxy) {
     this.accounts = accounts;
     this.credentials = credentials;
     this.issue = issue;
@@ -65,15 +76,32 @@ public class WorkplaceController {
     this.audit = audit;
     this.clock = clock;
     this.secureCookie = secureCookie;
+    this.trustLoopbackProxy = trustLoopbackProxy;
   }
 
   @PostMapping("/auth/v1/login")
   public ResponseEntity<Account> login(@RequestBody Login body,
-      @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
-    var login = accounts.login(body.username(), body.password(), describeDevice(userAgent)).orElseThrow(() -> new ResponseStatusException(
+      @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent,
+      @CookieValue(value = DEVICE_COOKIE, required = false) String deviceCookie, HttpServletRequest request) {
+    String deviceId = browserDeviceId(deviceCookie);
+    var login = accounts.login(body.username(), body.password(), describeDevice(userAgent), deviceId, connectionIp(request))
+        .orElseThrow(() -> new ResponseStatusException(
         HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ. Sau nhiều lần thử sai, hãy đợi một phút."));
     audit(login.account().username(), "SESSION_LOGIN", login.account().username());
-    return noStore().header(HttpHeaders.SET_COOKIE, cookie(login.token(), login.lifetime())).body(login.account());
+    return noStore().header(HttpHeaders.SET_COOKIE, cookie(login.token(), login.lifetime()), deviceCookie(deviceId))
+        .body(login.account());
+  }
+
+  @PatchMapping("/auth/v1/device-name")
+  public ResponseEntity<Void> nameDevice(@RequestHeader(value = AUTH, required = false) String auth,
+      @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent,
+      @CookieValue(value = DEVICE_COOKIE, required = false) String deviceCookie, @RequestBody DeviceName body) {
+    var actor = active(auth);
+    String id = accounts.nameCurrentDevice(auth, browserDeviceId(deviceCookie), describeDevice(userAgent), body.name())
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập lại."));
+    audit(actor.username(), "DEVICE_NAME_UPDATE", actor.username());
+    return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, deviceCookie(id))
+        .header(HttpHeaders.CACHE_CONTROL, "no-store").build();
   }
 
   @GetMapping("/auth/v1/me")
@@ -125,26 +153,32 @@ public class WorkplaceController {
       var name = stations.find(record.stationId()).map(station -> station.gate().name()).orElse(record.stationId());
       return new ScanActivity(record.eventId(), record.scannedAt(), record.siteId(), name, record.direction(), record.suspicious());
     }).toList();
-    return noStore().body(new EmployeeActivity(employee.id(), login.otherSessions(), login.recentLogins(), scans));
+    return noStore().body(new EmployeeActivity(employee.id(), login.otherSessions(), login.recentLogins(),
+        login.currentDeviceName(), scans));
   }
 
   @PostMapping("/workplace/v1/me/qr")
-  public ResponseEntity<?> qr(@RequestHeader(value = AUTH, required = false) String auth) {
+  public ResponseEntity<?> qr(@RequestHeader(value = AUTH, required = false) String auth,
+      @RequestBody(required = false) QrRequest body) {
     var actor = active(auth);
     var employee = employee(actor);
+    var attendance = attendanceFor(employee.id(), clock.now());
+    if ("LEFT".equals(attendance.status())) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("SHIFT_COMPLETED",
+          "Ngày công đã kết thúc. Mã QR mới sẽ có ở ngày công tiếp theo.", CorrelationIdFilter.currentId(), false));
+    }
     String id = accounts.credentialId(employee.id()).orElseThrow();
     var credential = credentials.getCredential(id).orElseThrow();
     if (!credential.active()) {
       return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("REVOKED", "Thẻ đã thu hồi",
           CorrelationIdFilter.currentId(), false));
     }
-    var token = issue.issue(id, credential.deviceHash());
+    var token = issue.issue(id, credential.deviceHash(), body == null ? null : body.direction());
     // A request racing with session revocation must not return a newly rotated credential.
     active(auth);
     audit(actor.username(), "QR_ISSUE", id);
-    var attendance = attendanceFor(employee.id(), clock.now());
     return noStore().body(new Pass(employee.id(), token.token(), token.expiresAt(), attendance.status(),
-        attendance.lastEntry(), attendance.lastExit()));
+        attendance.lastEntry(), attendance.lastExit(), attendance.workDate()));
   }
 
   @GetMapping("/workplace/v1/station")
@@ -215,15 +249,46 @@ public class WorkplaceController {
     return new ResponseStatusException(HttpStatus.FORBIDDEN, "Tài khoản không có quyền thực hiện thao tác này.");
   }
   private Attendance attendanceFor(String id, Instant now) {
-    var day = timesheets.calculate(id, calculator.workDate(now));
+    var date = calculator.workDate(now);
+    var day = timesheets.calculate(id, date);
     String status = day.map(data -> data.unpairedEntry() != null ? "IN_SHIFT"
         : data.row().lastOut() != null ? "LEFT" : "NOT_ENTERED").orElse("NOT_ENTERED");
     return new Attendance(id, status, day.map(TimesheetCalculator.Calculation::lastEntry).orElse(null),
-        day.map(data -> data.row().lastOut()).orElse(null));
+        day.map(data -> data.row().lastOut()).orElse(null), date);
+  }
+  private String connectionIp(HttpServletRequest request) {
+    var peer = ipLiteral(request.getRemoteAddr());
+    if (trustLoopbackProxy && peer != null && peer.isLoopbackAddress()) {
+      var socketIp = ipLiteral(request.getHeader("X-TMC-Client-IP"));
+      if (socketIp != null) return socketIp.getHostAddress();
+    }
+    return peer == null ? null : peer.getHostAddress();
+  }
+
+  private static InetAddress ipLiteral(String value) {
+    if (value == null || value.length() > 45) return null;
+    boolean ipv4 = value.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}");
+    boolean ipv6 = value.contains(":") && value.matches("[0-9A-Fa-f:.]+");
+    if (!ipv4 && !ipv6) return null;
+    try {
+      return InetAddress.getByName(value);
+    } catch (UnknownHostException invalid) {
+      return null;
+    }
   }
   private String cookie(String value, Duration lifetime) {
-    return ResponseCookie.from(WorkplaceConfiguration.SESSION_COOKIE, value).httpOnly(true).secure(secureCookie)
+    return cookie(WorkplaceConfiguration.SESSION_COOKIE, value, lifetime);
+  }
+  private String deviceCookie(String id) {
+    return cookie(DEVICE_COOKIE, id, DEVICE_COOKIE_LIFETIME);
+  }
+  private String cookie(String name, String value, Duration lifetime) {
+    return ResponseCookie.from(name, value).httpOnly(true).secure(secureCookie)
         .sameSite("Strict").path("/").maxAge(lifetime).build().toString();
+  }
+  private static String browserDeviceId(String cookie) {
+    return cookie != null && cookie.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+        ? cookie : UUID.randomUUID().toString();
   }
   private ResponseEntity<Void> clearSession() {
     return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, cookie("", Duration.ZERO))
@@ -246,13 +311,16 @@ public class WorkplaceController {
   }
 
   public record Login(String username, String password) {}
+  public record DeviceName(String name) {}
+  public record QrRequest(Direction direction) {}
   public record Password(String current, String replacement) {}
   public record AccountUpdate(Boolean enabled, String password) {}
   public record ClosedSessions(int closed) {}
   public record ScanActivity(String eventId, Instant scannedAt, String siteId, String stationName, String direction,
       boolean suspicious) {}
   public record EmployeeActivity(String employeeId, int otherSessions, List<LoginEvent> recentLogins,
-      List<ScanActivity> scans) {}
-  public record Attendance(String employeeId, String status, Instant lastEntry, Instant lastExit) {}
-  public record Pass(String employeeId, String token, Instant expiresAt, String status, Instant lastEntry, Instant lastExit) {}
+      String currentDeviceName, List<ScanActivity> scans) {}
+  public record Attendance(String employeeId, String status, Instant lastEntry, Instant lastExit, LocalDate workDate) {}
+  public record Pass(String employeeId, String token, Instant expiresAt, String status, Instant lastEntry, Instant lastExit,
+      LocalDate workDate) {}
 }

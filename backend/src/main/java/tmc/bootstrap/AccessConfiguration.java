@@ -56,6 +56,7 @@ import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
 import tmc.access.infrastructure.snapshot.MutableSnapshot;
 import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
+import tmc.attendance.application.TimesheetCalculator;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.EmployeeDirectory;
 import tmc.shared.StaffDirectory;
@@ -75,8 +76,10 @@ public class AccessConfiguration {
   }
 
   @Bean
-  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc, @Value("${tmc.accounts.enabled:false}") boolean workplace) {
-    return new JdbcPresenceTracker(jdbc, workplace);
+  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc, TimesheetCalculator calculator,
+      @Value("${tmc.accounts.enabled:false}") boolean workplace) {
+    return workplace ? new JdbcPresenceTracker(jdbc, true, time -> calculator.start(calculator.workDate(time)))
+        : new JdbcPresenceTracker(jdbc);
   }
 
   @Bean

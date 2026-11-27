@@ -68,7 +68,7 @@ public final class PersistAndConsumeStep implements VerificationStep {
     } catch (ReplayDetectedException replay) {
       return StepResult.deny(Reason.REPLAY);
     } catch (AntiPassbackException denied) {
-      return StepResult.deny(Reason.ANTI_PASSBACK);
+      return StepResult.deny(denied.reason());
     } catch (CredentialChangedException changed) {
       return StepResult.deny(changed.reason());
     } catch (RuntimeException persistFailed) {

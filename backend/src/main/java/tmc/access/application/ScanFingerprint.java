@@ -13,10 +13,12 @@ final class ScanFingerprint {
   static String of(AccessRequest request) {
     try {
       var digest = MessageDigest.getInstance("SHA-256");
-      for (String value : new String[] {
-          request.stationId().value(), request.siteId().value(), request.direction().name(),
-          request.submittedAt().toString(), request.deviceId(), request.token()
-      }) {
+      String[] fields = request.stationProofId() == null
+          ? new String[] {request.stationId().value(), request.siteId().value(), request.direction().name(),
+              request.submittedAt().toString(), request.deviceId(), request.token()}
+          : new String[] {"station-proof", request.stationId().value(), request.siteId().value(),
+              request.direction().name(), request.stationProofId()};
+      for (String value : fields) {
         String field = Objects.toString(value, "");
         digest.update((field.length() + ":" + field).getBytes(StandardCharsets.UTF_8));
       }

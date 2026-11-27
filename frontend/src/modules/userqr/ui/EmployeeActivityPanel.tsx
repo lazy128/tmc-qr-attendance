@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { errorMessage } from "../../shared/lib/error-message";
 import {
   accountApi,
@@ -26,6 +26,9 @@ export function EmployeeActivityPanel({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
+  const [savingDevice, setSavingDevice] = useState(false);
+  const [deviceMessage, setDeviceMessage] = useState("");
+  const [deviceError, setDeviceError] = useState("");
 
   useEffect(() => {
     const request = new AbortController();
@@ -70,6 +73,24 @@ export function EmployeeActivityPanel({
       setError(errorMessage(cause));
     } finally {
       setClosing(false);
+    }
+  }
+
+  async function saveDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = String(new FormData(event.currentTarget).get("deviceName") ?? "").trim();
+    if (savingDevice) return;
+    setSavingDevice(true);
+    setDeviceError("");
+    setDeviceMessage("");
+    try {
+      await accountApi.nameDevice(name);
+      setDeviceMessage("Đã lưu tên cho thiết bị này.");
+      setRevision((value) => value + 1);
+    } catch (cause) {
+      setDeviceError(errorMessage(cause));
+    } finally {
+      setSavingDevice(false);
     }
   }
 
@@ -124,11 +145,39 @@ export function EmployeeActivityPanel({
           </details>
           <details className="workflow-technical">
             <summary>Lịch sử đăng nhập</summary>
+            <form className="grid gap-2 py-3" onSubmit={(event) => void saveDevice(event)}>
+              <label className="workflow-field">
+                Tên thiết bị này
+                <input
+                  key={data.currentDeviceName ?? ""}
+                  name="deviceName"
+                  defaultValue={data.currentDeviceName ?? ""}
+                  placeholder="Ví dụ iPhone của An"
+                  maxLength={60}
+                  required
+                />
+              </label>
+              <p>Đặt tên trên từng máy để nhận ra các lần đăng nhập từ trình duyệt đó.</p>
+              <button
+                type="submit"
+                className="workflow-button secondary w-fit"
+                disabled={savingDevice}
+              >
+                {savingDevice ? "Đang lưu…" : "Lưu tên thiết bị"}
+              </button>
+              {deviceError && <p role="alert">{deviceError}</p>}
+              {deviceMessage && <p aria-live="polite">{deviceMessage}</p>}
+            </form>
             {data.recentLogins.length ? (
               <ul className="workflow-activity-list">
                 {data.recentLogins.map((login, position) => (
                   <li key={`${login.signedInAt}-${position}`}>
-                    <strong>{login.deviceLabel}</strong>
+                    <strong>{login.deviceName ?? "Thiết bị chưa đặt tên"}</strong>
+                    <p>
+                      {login.deviceLabel} ·{" "}
+                      {login.deviceCode ? `Mã ${login.deviceCode}` : "Phiên cũ"}
+                    </p>
+                    <p>{login.clientIp ? `IP ${login.clientIp}` : "IP chưa được ghi khi đăng nhập"}</p>
                     <p>
                       {activityTime.format(new Date(login.signedInAt))} ·{" "}
                       {login.current

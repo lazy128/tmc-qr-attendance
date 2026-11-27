@@ -12,6 +12,7 @@ import { parseScanToken } from "../lib/scan-token";
 import { readQrFile } from "../lib/read-qr";
 import type { VerifyPayload, VerifyResult } from "../model/types";
 import { QrCamera } from "./QrCamera";
+import { StationCodePanel } from "./StationCodePanel";
 
 const reasons: Record<string, string> = {
   TOKEN_EXPIRED: "Mã QR đã hết hạn. Hãy quét mã mới.",
@@ -25,6 +26,7 @@ const reasons: Record<string, string> = {
   STATION_SCOPE: "Nhân viên không thuộc nhà máy này.",
   STATION_AUTH_FAILED: "Trạm quét hiện không hoạt động.",
   INVALID_TOKEN: "Mã QR không hợp lệ.",
+  SHIFT_COMPLETED: "Ngày công của nhân viên đã kết thúc.",
 };
 
 type Pending = { id: string; payload?: VerifyPayload };
@@ -85,7 +87,14 @@ export function GatePage() {
   }, []);
   return (
     <AppPage title="Trạm quét">
-      <RequireAccount roles={["GUARD"]}>
+      <RequireAccount
+        roles={["GUARD"]}
+        loginHint={
+          linkedCode
+            ? "Đăng nhập bằng tài khoản bảo vệ của trạm. Nếu mã vừa quét hết hạn trong lúc đăng nhập, hãy quét mã mới bằng camera trong Trạm quét."
+            : "Đăng nhập bằng tài khoản bảo vệ của trạm, sau đó mở camera để quét mã nhân viên."
+        }
+      >
         {(account) => (
           <AssignedStation
             key={account.username}
@@ -109,6 +118,7 @@ function AssignedStation({
   clearLink: () => void;
 }) {
   const [station, setStation] = useState<Station | null>(null);
+  const [displayCode, setDisplayCode] = useState(false);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -141,14 +151,28 @@ function AssignedStation({
       </section>
     );
   if (!station) return <p role="status">Đang tải trạm được giao…</p>;
+  if (displayCode && !linkedCode) {
+    return <StationCodePanel station={station} close={() => setDisplayCode(false)} />;
+  }
   return (
-    <StationScanner
-      key={station.stationId}
-      station={station}
-      linkedCode={linkedCode}
-      clearLink={clearLink}
-      storageKey={`tmc.pending.${username}.${station.stationId}`}
-    />
+    <div className="grid gap-4">
+      {station.gate.type === "ATTENDANCE_GATE" && !linkedCode && (
+        <button
+          type="button"
+          className="workflow-button secondary w-fit"
+          onClick={() => setDisplayCode(true)}
+        >
+          Hiện QR cho nhân viên quét
+        </button>
+      )}
+      <StationScanner
+        key={station.stationId}
+        station={station}
+        linkedCode={linkedCode}
+        clearLink={clearLink}
+        storageKey={`tmc.pending.${username}.${station.stationId}`}
+      />
+    </div>
   );
 }
 
@@ -349,7 +373,7 @@ function StationScanner({
                       ? "Đưa mã QR vào khung hình"
                       : "Sẵn sàng quét QR"}
               </strong>
-              {linkedCode && <p>Xác nhận lượt quét tại trạm được giao.</p>}
+              {linkedCode && <p>Xác nhận khi nhân viên có mặt tại cổng.</p>}
             </>
           )}
         </div>
@@ -364,16 +388,29 @@ function StationScanner({
               Thử lại lượt quét
             </button>
           ) : linkedCode ? (
-            <button
-              className="workflow-button"
-              disabled={reading}
-              onClick={() => {
-                clearLink();
-                void scan(() => linkedCode);
-              }}
-            >
-              <Check size={18} /> Xác nhận quét
-            </button>
+            <>
+              <button
+                className="workflow-button"
+                disabled={reading}
+                onClick={() => {
+                  clearLink();
+                  void scan(() => linkedCode);
+                }}
+              >
+                <Check size={18} /> Xác nhận quét
+              </button>
+              <button
+                type="button"
+                className="workflow-button secondary"
+                onClick={() => {
+                  setResult(null);
+                  setError("");
+                  clearLink();
+                }}
+              >
+                Quét mã khác
+              </button>
+            </>
           ) : canStream ? (
             <button
               className="workflow-button"

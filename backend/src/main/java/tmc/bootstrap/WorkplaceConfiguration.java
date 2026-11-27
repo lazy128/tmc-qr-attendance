@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import tmc.access.infrastructure.security.WorkplacePolicy;
+import tmc.shared.auth.StationQrTokens;
 import tmc.shared.auth.WorkplaceAccounts;
 import tmc.shared.clock.ClockProvider;
 
@@ -31,6 +32,9 @@ public class WorkplaceConfiguration {
 
   @Bean
   WorkplacePolicy workplacePolicy(WorkplaceAccounts accounts) { return new WorkplacePolicy(accounts); }
+
+  @Bean
+  StationQrTokens stationQrTokens(@Value("${TMC_SESSION_KEY:}") String key) { return new StationQrTokens(key); }
 
   @Bean
   ApplicationRunner firstAdministrator(WorkplaceAccounts accounts,

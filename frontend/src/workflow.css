@@ -176,12 +176,6 @@
   color: var(--workflow-accent);
   text-decoration: underline;
 }
-.workflow-kv {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 12px;
-  margin-top: 10px;
-}
 .workflow-pill {
   display: inline-flex;
   width: max-content;

@@ -4,6 +4,7 @@ import { request } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
 import { AppPage } from "../../shared/ui/AppPage";
 import { RequireAccount } from "../../shared/ui/Auth";
+import { StationCodePanel } from "./StationCodePanel";
 import {
   accountApi,
   groupLabel,
@@ -35,6 +36,7 @@ function Administration({ actor }: { actor: string }) {
   const [registry, setRegistry] = useState<Registry | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [stationEdit, setStationEdit] = useState<Station | null>(null);
+  const [stationCodeId, setStationCodeId] = useState("");
   const [reset, setReset] = useState<Account | null>(null);
   const [role, setRole] = useState<Role>("EMPLOYEE");
   const [selectedSite, setSelectedSite] = useState("");
@@ -157,6 +159,9 @@ function Administration({ actor }: { actor: string }) {
   const associateEmployee = role === "EMPLOYEE" || role === "MANAGER";
   const siteStations = registry.stations.filter((station) => station.siteId === siteId);
   const activeStations = siteStations.filter((station) => station.status === "ACTIVE");
+  const stationCode = activeStations.find(
+    (station) => station.stationId === stationCodeId && station.gate.type === "ATTENDANCE_GATE",
+  );
   const siteAccounts = accounts.filter((account) => !account.siteId || account.siteId === siteId);
   return (
     <div className="grid gap-4">
@@ -197,6 +202,7 @@ function Administration({ actor }: { actor: string }) {
           onChange={(event) => {
             setSelectedSite(event.target.value);
             setStationEdit(null);
+            setStationCodeId("");
             setReset(null);
             setError("");
             setNotice("");
@@ -431,6 +437,13 @@ function Administration({ actor }: { actor: string }) {
         </>
       ) : (
         <>
+          {stationCode && (
+            <StationCodePanel
+              key={stationCode.stationId}
+              station={stationCode}
+              close={() => setStationCodeId("")}
+            />
+          )}
           <section className="workflow-card grid gap-3">
             <h2>Trạm tại {siteName(siteId)}</h2>
             <div className="workflow-table-wrap">
@@ -456,13 +469,25 @@ function Administration({ actor }: { actor: string }) {
                       </td>
                       <td>{station.status === "ACTIVE" ? "Đang hoạt động" : "Đã tắt"}</td>
                       <td>
-                        <button
-                          className="workflow-text-button"
-                          disabled={busy}
-                          onClick={() => setStationEdit(station)}
-                        >
-                          Sửa trạm
-                        </button>
+                        <div className="workflow-actions">
+                          {station.status === "ACTIVE" &&
+                            station.gate.type === "ATTENDANCE_GATE" && (
+                              <button
+                                type="button"
+                                className="workflow-text-button"
+                                onClick={() => setStationCodeId(station.stationId)}
+                              >
+                                Hiện mã tại cổng
+                              </button>
+                            )}
+                          <button
+                            className="workflow-text-button"
+                            disabled={busy}
+                            onClick={() => setStationEdit(station)}
+                          >
+                            Sửa trạm
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

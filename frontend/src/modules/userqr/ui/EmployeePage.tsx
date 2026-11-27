@@ -1,12 +1,18 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { BadgeCheck, Clock3, QrCode } from "lucide-react";
-import QRCode from "qrcode";
 import { ApiRequestError } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
-import { employeeQrPayload } from "../../shared/lib/qr-link";
+import {
+  checkInCodeFromQr,
+  employeeQrPayload,
+  guardQrPayload,
+  type CheckInCode,
+} from "../../shared/lib/qr-link";
+import { QrCanvas } from "../../shared/ui/QrCanvas";
 import { AppPage } from "../../shared/ui/AppPage";
 import { RequireAccount } from "../../shared/ui/Auth";
 import { EmployeeActivityPanel } from "./EmployeeActivityPanel";
+import { EmployeeCheckIn } from "./EmployeeCheckIn";
 import {
   displayTime,
   groupLabel,
@@ -17,73 +23,66 @@ import {
   type Pass,
 } from "../../shared/workflow";
 
-const phoneRefreshLeadMs = 18_000;
-const phoneScanWindowMs = 15_000;
+const phoneRefreshLeadMs = 3_000;
 const kioskRefreshLeadMs = 8_000;
+type QrMode = "ENTRY" | "EXIT" | "GUARD";
 
-function EmployeeQr({ payload }: { payload: string }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const element = canvas.current;
-    if (!element) return;
-    let active = true;
-    let observer: ResizeObserver | undefined;
-    const renderScale = 6;
-    QRCode.toCanvas(element, payload, {
-      scale: renderScale,
-      margin: 4,
-      errorCorrectionLevel: "M",
-    })
-      .then(() => {
-        const container = element.parentElement;
-        if (!active || !container || typeof ResizeObserver === "undefined") return;
-        const modules = element.width / renderScale;
-        observer = new ResizeObserver(([entry]) => {
-          if (!entry) return;
-          // Give every QR module an equal number of screen pixels.
-          const pixelsPerModule = Math.max(1, Math.floor(entry.contentRect.width / modules));
-          element.style.width = `${pixelsPerModule * modules}px`;
-        });
-        observer.observe(container);
-      })
-      .catch(() => {
-        if (active) setFailed(true);
-      });
-    return () => {
-      active = false;
-      observer?.disconnect();
-    };
-  }, [payload]);
-  if (failed) return <p role="alert">Không thể hiển thị mã QR.</p>;
-  return <canvas ref={canvas} role="img" aria-label="Mã QR truy cập" />;
-}
-
-type TokenDetails = { jti?: string; cver?: number; kid?: string; iat?: number; exp?: number };
-
-function tokenDetails(token: string): TokenDetails {
+function qrLifetimeMs(token: string): number | undefined {
   try {
-    const [header = "", payload = ""] = token.split(".");
-    const decode = (part: string) =>
-      JSON.parse(atob(part.replaceAll("-", "+").replaceAll("_", "/")));
-    const claims = decode(payload) as TokenDetails;
-    const { kid } = decode(header) as TokenDetails;
-    return kid ? { ...claims, kid } : claims;
+    const [, payload = ""] = token.split(".");
+    const { iat, exp } = JSON.parse(atob(payload.replaceAll("-", "+").replaceAll("_", "/"))) as {
+      iat?: number;
+      exp?: number;
+    };
+    if (typeof iat === "number" && typeof exp === "number") return (exp - iat) * 1000;
   } catch {
-    return {};
+    // Use the API expiry if timing claims are unavailable.
   }
+  return undefined;
 }
 
-function EmployeePass({ employee }: { employee: Employee }) {
-  const [qr, setQr] = useState<{ pass: Pass; payload: string; deadline: number } | null>(null);
+function EmployeePass({
+  employee,
+  confirmationView,
+  onFinishedChange,
+}: {
+  employee: Employee;
+  confirmationView: boolean;
+  onFinishedChange: (finished: boolean) => void;
+}) {
+  const [mode, setMode] = useState<QrMode | null>(null);
+  const [qr, setQr] = useState<{ pass: Pass; deadline: number } | null>(null);
   const [liveAttendance, setLiveAttendance] = useState<AttendanceStatus | null>(null);
   const [now, setNow] = useState(0);
   const [error, setError] = useState("");
   const [revoked, setRevoked] = useState(false);
+  const pass = qr?.pass;
+  const today = liveAttendance ?? pass;
+  const confirmed = today?.status === "IN_SHIFT";
+  const left = today?.status === "LEFT";
+  const currentMode = mode ?? (confirmed || left ? null : "ENTRY");
+  const guardMode = currentMode === "GUARD";
+  const showQr = !confirmationView && !left && currentMode !== null;
+
+  function openQr(next: QrMode | null) {
+    setQr(null);
+    setError("");
+    setRevoked(false);
+    setMode(next);
+  }
+
+  const updateAttendance = useEffectEvent((latest: AttendanceStatus) => {
+    if (today && (today.workDate !== latest.workDate || today.status !== latest.status))
+      openQr(null);
+    setLiveAttendance(latest);
+    onFinishedChange(latest.status === "LEFT");
+  });
   const fetchPass = useEffectEvent(async (signal: AbortSignal) => {
     const requestedAt = performance.now();
     try {
-      const issued = await workflow.pass(signal);
+      const direction =
+        currentMode === "EXIT" ? "EXIT" : currentMode === "ENTRY" ? "ENTRY" : undefined;
+      const issued = await workflow.pass(signal, direction);
       if (signal.aborted) return;
       if (issued.employeeId !== employee.id) {
         setQr(null);
@@ -91,16 +90,15 @@ function EmployeePass({ employee }: { employee: Employee }) {
         return;
       }
       const receivedAt = performance.now();
-      const { iat, exp } = tokenDetails(issued.token);
+      const lifetime = qrLifetimeMs(issued.token);
       // The signed timestamps are rounded down to seconds. Budget for that and the request time.
       const deadline =
-        iat !== undefined && exp !== undefined
-          ? requestedAt + (exp - iat - 1) * 1000
+        lifetime !== undefined
+          ? requestedAt + lifetime - 1000
           : receivedAt + (Date.parse(issued.expiresAt) - Date.now());
       setNow(receivedAt);
       setQr({
         pass: issued,
-        payload: employeeQrPayload(issued.token, window.location.origin),
         deadline,
       });
     } catch (cause) {
@@ -114,10 +112,13 @@ function EmployeePass({ employee }: { employee: Employee }) {
     }
   });
   const deadline = qr?.deadline;
-  const phoneLink = qr?.payload.startsWith("http") ?? false;
+  const payload = pass
+    ? (guardMode ? guardQrPayload : employeeQrPayload)(pass.token, window.location.origin)
+    : "";
+  const phoneLink = payload.startsWith("http");
   const refreshLead = phoneLink ? phoneRefreshLeadMs : kioskRefreshLeadMs;
   useEffect(() => {
-    if (revoked || error) return;
+    if (!showQr || revoked || error) return;
     const controller = new AbortController();
     const delay =
       deadline === undefined ? 0 : Math.max(1000, deadline - performance.now() - refreshLead);
@@ -126,7 +127,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [employee.id, deadline, refreshLead, error, revoked]);
+  }, [employee.id, deadline, refreshLead, error, revoked, showQr, currentMode]);
   useEffect(() => {
     if (deadline === undefined) return;
     const timer = window.setInterval(() => setNow(performance.now()), 250);
@@ -134,7 +135,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
   }, [deadline]);
   useEffect(() => {
     const controller = new AbortController();
-    let timer = window.setTimeout(refreshAttendance, 2000);
+    let timer = window.setTimeout(refreshAttendance, 0);
     async function refreshAttendance() {
       try {
         const latest = await workflow.attendance(controller.signal);
@@ -144,7 +145,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
           window.dispatchEvent(new Event("tmc-session-changed"));
           return;
         }
-        setLiveAttendance(latest);
+        updateAttendance(latest);
       } catch {
         // Keep the latest known attendance while the connection recovers.
       } finally {
@@ -156,24 +157,24 @@ function EmployeePass({ employee }: { employee: Employee }) {
       window.clearTimeout(timer);
     };
   }, [employee.id]);
-  const pass = qr?.pass;
   const remainingMs = Math.max(0, (deadline ?? now) - now);
   const remaining = Math.ceil(remainingMs / 1000);
-  const canScan = remainingMs > (phoneLink ? phoneScanWindowMs : 0);
+  const canScan = remainingMs > 0;
+  const countdown =
+    remaining >= 60
+      ? `${Math.floor(remaining / 60)} phút ${remaining % 60} giây`
+      : `${remaining} giây`;
   const status = revoked
     ? "Đã thu hồi"
     : remainingMs > refreshLead
       ? "Còn hiệu lực"
       : remaining > 0
-        ? error && !canScan
-          ? "Chưa có mã mới"
-          : "Đang làm mới…"
+        ? "Đang làm mới…"
         : pass
           ? "Đã hết hạn"
           : error
             ? "Chưa có mã"
             : "Đang tạo mã…";
-  const today = liveAttendance ?? pass;
   const attendance =
     today?.status === "IN_SHIFT"
       ? "Đã ghi nhận giờ vào"
@@ -182,8 +183,6 @@ function EmployeePass({ employee }: { employee: Employee }) {
         : today
           ? "Chưa vào"
           : "Đang kiểm tra";
-  const claims = pass ? tokenDetails(pass.token) : null;
-
   return (
     <div className="workflow-pass-content">
       <div className="workflow-person">
@@ -191,14 +190,16 @@ function EmployeePass({ employee }: { employee: Employee }) {
         <div>
           <h2>{employee.name}</h2>
           <p>
-            {employee.id} · {groupLabel[employee.accessGroup]} · {siteName(employee.siteId)}
+            {employee.id} · {groupLabel[employee.accessGroup]}
           </p>
+          <p>Chi nhánh được phân công · {siteName(employee.siteId)}</p>
         </div>
       </div>
       <div className="workflow-today" role="status">
         <Clock3 aria-hidden="true" />
         <div>
           <h3>Ca hôm nay</h3>
+          {today?.workDate && <p>{today.workDate.split("-").reverse().join("/")}</p>}
           <strong>{attendance}</strong>
           {today?.lastEntry && (
             <p>
@@ -208,84 +209,156 @@ function EmployeePass({ employee }: { employee: Employee }) {
                 : ""}
             </p>
           )}
+          {left && <p>Đã kết thúc ngày công.</p>}
         </div>
       </div>
-      <div className="workflow-qr">
-        {qr && canScan ? (
-          <EmployeeQr key={qr.pass.token} payload={qr.payload} />
-        ) : (
-          <div className="workflow-qr-empty">
-            <QrCode size={52} />
-            <span>{status}</span>
-          </div>
-        )}
-      </div>
-      <div className="workflow-qr-status">
-        <span className={revoked ? "workflow-pill danger" : "workflow-pill"}>{status}</span>
-        {canScan && <strong>{remaining} giây</strong>}
-      </div>
-      {canScan && (
-        <p className="workflow-qr-hint">
-          {phoneLink
-            ? "Quét bằng camera điện thoại để mở Trạm quét. Bảo vệ xác nhận lượt quét tại cổng."
-            : "Đưa mã vào camera trong Trạm quét. Camera mặc định của điện thoại sẽ đọc mã này dưới dạng văn bản."}
-        </p>
+      {!confirmationView && confirmed && (
+        <div className="workflow-today">
+          <BadgeCheck aria-hidden="true" />
+          <strong>Đã xác nhận chấm công</strong>
+        </div>
       )}
-      {error && (
-        <div className="grid gap-2">
-          <p className="workflow-error" role="alert">
-            {error}
-          </p>
+      {!confirmationView && !left && (
+        <div className="workflow-actions">
+          {confirmed && (
+            <button
+              type="button"
+              className="workflow-button"
+              aria-expanded={currentMode === "EXIT"}
+              onClick={() => openQr(currentMode === "EXIT" ? null : "EXIT")}
+            >
+              {currentMode === "EXIT" ? "Ẩn QR giờ ra" : "Mở QR giờ ra"}
+            </button>
+          )}
           <button
+            type="button"
             className="workflow-button secondary"
-            onClick={() => {
-              setQr(null);
-              setError("");
-            }}
+            aria-expanded={guardMode}
+            onClick={() => openQr(guardMode ? null : "GUARD")}
           >
-            Thử lại
+            {guardMode
+              ? confirmed
+                ? "Ẩn QR cho bảo vệ"
+                : "Về QR cá nhân"
+              : "Mở QR cho bảo vệ quét"}
           </button>
         </div>
       )}
-      <details className="workflow-technical">
-        <summary>Chi tiết kỹ thuật</summary>
-        {claims ? (
-          <dl className="workflow-kv">
-            <dt>jti</dt>
-            <dd>{claims.jti ?? "—"}</dd>
-            <dt>cver</dt>
-            <dd>{claims.cver ?? "—"}</dd>
-            <dt>kid</dt>
-            <dd>{claims.kid ?? "—"}</dd>
-            <dt>TTL</dt>
-            <dd>
-              {claims.exp !== undefined && claims.iat !== undefined ? claims.exp - claims.iat : "—"}{" "}
-              giây
-            </dd>
-          </dl>
-        ) : (
-          <p>Chưa có token.</p>
-        )}
-      </details>
+      {showQr && (
+        <>
+          <h3>
+            {guardMode
+              ? "Mã QR cho bảo vệ"
+              : currentMode === "EXIT"
+                ? "Mã QR giờ ra"
+                : "Mã QR của tôi"}
+          </h3>
+          <div className="workflow-qr">
+            {pass && canScan ? (
+              <QrCanvas key={pass.token} payload={payload} label="Mã QR truy cập" />
+            ) : (
+              <div className="workflow-qr-empty">
+                <QrCode size={52} />
+                <span>{status}</span>
+              </div>
+            )}
+          </div>
+          <div className="workflow-qr-status">
+            <span className={revoked ? "workflow-pill danger" : "workflow-pill"}>{status}</span>
+            {canScan && <strong>{countdown}</strong>}
+          </div>
+          {canScan && (
+            <p className="workflow-qr-hint">
+              {guardMode
+                ? `Đưa mã cho bảo vệ tại ${siteName(employee.siteId)}. Trạm được giao sẽ ghi giờ vào hoặc ra.`
+                : phoneLink
+                  ? `Quét mã bằng điện thoại đã đăng nhập cùng tài khoản để ghi giờ ${currentMode === "EXIT" ? "ra" : "vào"}.`
+                  : "Trên điện thoại, dùng mục Quét QR chấm công để đọc mã này."}
+            </p>
+          )}
+          {error && (
+            <div className="grid gap-2">
+              <p className="workflow-error" role="alert">
+                {error}
+              </p>
+              <button
+                className="workflow-button secondary"
+                onClick={() => {
+                  setQr(null);
+                  setError("");
+                }}
+              >
+                Thử lại
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
 export function EmployeePage() {
+  const [linkedCode, setLinkedCode] = useState<CheckInCode | null>(null);
+  const [confirmationView, setConfirmationView] = useState(false);
+  useEffect(() => {
+    function readLink() {
+      const code = checkInCodeFromQr(window.location.href);
+      if (!code) return;
+      setLinkedCode(code);
+      setConfirmationView(true);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
+    readLink();
+    window.addEventListener("hashchange", readLink);
+    return () => window.removeEventListener("hashchange", readLink);
+  }, []);
   return (
-    <AppPage title="Mã QR của tôi">
-      <RequireAccount roles={["EMPLOYEE", "MANAGER"]}>
-        {(account) => <EmployeeProfile key={account.username} employeeId={account.employeeId} />}
+    <AppPage title="Chấm công cá nhân">
+      <RequireAccount
+        roles={["EMPLOYEE", "MANAGER"]}
+        loginHint={
+          linkedCode?.kind === "personal"
+            ? "Đăng nhập bằng cùng tài khoản nhân viên đang mở mã QR trên máy tính."
+            : linkedCode
+              ? "Đăng nhập tài khoản nhân viên để xác nhận chấm công tại cổng."
+              : ""
+        }
+      >
+        {(account) => (
+          <EmployeeProfile
+            key={account.username}
+            employeeId={account.employeeId}
+            linkedCode={linkedCode}
+            confirmationView={confirmationView}
+            clearLink={() => setLinkedCode(null)}
+          />
+        )}
       </RequireAccount>
     </AppPage>
   );
 }
 
-function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
+function EmployeeProfile({
+  employeeId,
+  linkedCode,
+  confirmationView,
+  clearLink,
+}: {
+  employeeId: string | null;
+  linkedCode: CheckInCode | null;
+  confirmationView: boolean;
+  clearLink: () => void;
+}) {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [qrRevision, setQrRevision] = useState(0);
+  const [finished, setFinished] = useState<boolean | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     workflow
@@ -305,7 +378,16 @@ function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
   }, [employeeId, reload]);
   return (
     <div className="grid gap-4">
-      <section className="workflow-card workflow-pass">
+      {employee && (finished === false || confirmationView) && (
+        <EmployeeCheckIn
+          linkedCode={linkedCode}
+          confirmationView={confirmationView}
+          finished={finished === true}
+          clearLink={clearLink}
+          onRecorded={() => setQrRevision((revision) => revision + 1)}
+        />
+      )}
+      <section className={`workflow-card workflow-pass${confirmationView ? "" : " order-first"}`}>
         {error && (
           <div className="grid gap-2">
             <p role="alert" className="workflow-error">
@@ -323,7 +405,14 @@ function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
           </div>
         )}
         {!error && !employee && <p role="status">Đang tải hồ sơ…</p>}
-        {employee && <EmployeePass key={`${employee.id}-${qrRevision}`} employee={employee} />}
+        {employee && (
+          <EmployeePass
+            key={`${employee.id}-${qrRevision}`}
+            employee={employee}
+            confirmationView={confirmationView}
+            onFinishedChange={setFinished}
+          />
+        )}
       </section>
       {employee && (
         <EmployeeActivityPanel

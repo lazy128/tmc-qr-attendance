@@ -206,3 +206,11 @@ CREATE TABLE IF NOT EXISTS workplace_login_history (
   device_label VARCHAR(80) NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workplace_login_history_user ON workplace_login_history(username, signed_in_at);
+ALTER TABLE workplace_login_history ADD COLUMN IF NOT EXISTS device_id VARCHAR(36);
+ALTER TABLE workplace_login_history ADD COLUMN IF NOT EXISTS client_ip VARCHAR(45);
+CREATE TABLE IF NOT EXISTS workplace_browser_device (
+  username VARCHAR(60) NOT NULL REFERENCES workplace_account(username),
+  device_id VARCHAR(36) NOT NULL,
+  display_name VARCHAR(60),
+  PRIMARY KEY (username, device_id)
+);

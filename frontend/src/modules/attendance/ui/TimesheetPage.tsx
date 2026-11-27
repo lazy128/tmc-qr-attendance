@@ -80,13 +80,15 @@ export function TimesheetPage() {
   return (
     <AppPage title="Bảng công theo ngày">
       <RequireAccount roles={["EMPLOYEE", "MANAGER", "HR", "ADMIN"]}>
-        {(account) => <Timesheet key={account.username} role={account.role} />}
+        {(account) => (
+          <Timesheet key={account.username} role={account.role} assignedSite={account.siteId} />
+        )}
       </RequireAccount>
     </AppPage>
   );
 }
 
-function Timesheet({ role }: { role: Role }) {
+function Timesheet({ role, assignedSite }: { role: Role; assignedSite: string | null }) {
   const [month, setMonth] = useState(currentMonth);
   const [site, setSite] = useState("");
   const [filter, setFilter] = useState("");
@@ -199,6 +201,12 @@ function Timesheet({ role }: { role: Role }) {
               ))}
             </select>
           </label>
+        )}
+        {!canExport && assignedSite && (
+          <div className="workflow-field">
+            <span>Chi nhánh được phân công</span>
+            <strong>{siteName(assignedSite)}</strong>
+          </div>
         )}
         {role !== "EMPLOYEE" && (
           <label className="workflow-field">

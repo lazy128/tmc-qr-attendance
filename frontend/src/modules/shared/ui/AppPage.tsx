@@ -27,7 +27,7 @@ export function AppPage({ title, children }: { title: string; children: ReactNod
           <nav aria-label="Chấm công">
             {!account.changeRequired && (
               <>
-                {account.employeeId && <Link to="/employee">Mã QR của tôi</Link>}
+                {account.employeeId && <Link to="/employee">Chấm công cá nhân</Link>}
                 {account.role === "GUARD" && <Link to="/gate">Trạm quét</Link>}
                 {(account.employeeId || canManageTimesheets(account.role)) && (
                   <Link to="/attendance">
