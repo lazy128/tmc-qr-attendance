@@ -5,8 +5,11 @@ import { AppPage } from "../../shared/ui/AppPage";
 import { RequireAccount } from "../../shared/ui/Auth";
 import {
   businessZone,
+  canManageTimesheets,
   displayTime,
+  siteName,
   workflow,
+  workplaceSiteNames,
   type Role,
   type ScanDetail,
   type Timesheet,
@@ -18,13 +21,6 @@ const labels = {
   DUPLICATE: "Trùng lượt",
   REVIEW: "Cần HR xem",
 };
-const statusLabels: Record<string, string> = {
-  SUCCESS: "Đã cập nhật",
-  PENDING: "Chờ cập nhật",
-  FAILED: "Lỗi đồng bộ",
-  RETRYING: "Đang thử lại",
-};
-
 function currentMonth() {
   const parts = new Intl.DateTimeFormat("en", {
     year: "numeric",
@@ -83,7 +79,7 @@ function TechnicalRow({ row }: { row: Timesheet }) {
 export function TimesheetPage() {
   return (
     <AppPage title="Bảng công theo ngày">
-      <RequireAccount roles={["EMPLOYEE", "MANAGER", "HR"]}>
+      <RequireAccount roles={["EMPLOYEE", "MANAGER", "HR", "ADMIN"]}>
         {(account) => <Timesheet key={account.username} role={account.role} />}
       </RequireAccount>
     </AppPage>
@@ -92,18 +88,16 @@ export function TimesheetPage() {
 
 function Timesheet({ role }: { role: Role }) {
   const [month, setMonth] = useState(currentMonth);
+  const [site, setSite] = useState("");
   const [filter, setFilter] = useState("");
   const [rows, setRows] = useState<Timesheet[]>([]);
   const [roster, setRoster] = useState<{ employeeId: string; employeeName: string }[]>([]);
-  const [publication, setPublication] = useState<{
-    status: string;
-    updatedAt: string | null;
-  } | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [operation, setOperation] = useState(false);
   const [reload, setReload] = useState(0);
   const [edit, setEdit] = useState<Timesheet | null>(null);
+  const canExport = canManageTimesheets(role);
   useEffect(() => {
     if (!month) return;
     const controller = new AbortController();
@@ -112,8 +106,8 @@ function Timesheet({ role }: { role: Role }) {
       setError("");
       try {
         const [result, people] = await Promise.all([
-          workflow.rows(month, filter, controller.signal),
-          role === "EMPLOYEE" ? [] : workflow.roster(controller.signal),
+          workflow.rows(month, filter, controller.signal, site),
+          role === "EMPLOYEE" ? [] : workflow.roster(controller.signal, site),
         ]);
         if (controller.signal.aborted) return;
         setRows(result);
@@ -126,25 +120,7 @@ function Timesheet({ role }: { role: Role }) {
     }
     void load();
     return () => controller.abort();
-  }, [role, month, filter, reload]);
-
-  useEffect(() => {
-    if (role !== "HR" || !month || loading) return;
-    const controller = new AbortController();
-    const poll = () =>
-      void workflow
-        .status(month, controller.signal)
-        .then((state) => {
-          if (!controller.signal.aborted) setPublication(state);
-        })
-        .catch(() => undefined);
-    poll();
-    const timer = window.setInterval(poll, 5000);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [role, month, loading]);
+  }, [role, month, filter, reload, site]);
 
   async function operate(action: () => Promise<void>) {
     setOperation(true);
@@ -167,18 +143,17 @@ function Timesheet({ role }: { role: Role }) {
     void operate(async () => {
       await workflow.correct(edit.employeeId, edit.workDate, exit, reason);
       setEdit(null);
-      setPublication(null);
       setReload((value) => value + 1);
     });
   }
 
   function download(type: "csv" | "xlsx") {
     void operate(async () => {
-      const blob = await workflow.export(month, type);
+      const blob = await workflow.export(month, type, site, filter);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `timesheet-${month}.${type}`;
+      link.download = `timesheet-${month}${site ? `-${site}` : ""}.${type}`;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
@@ -196,12 +171,35 @@ function Timesheet({ role }: { role: Role }) {
             disabled={operation}
             onChange={(event) => {
               setRows([]);
-              setPublication(null);
               setEdit(null);
               setMonth(event.target.value);
             }}
           />
         </label>
+        {canExport && (
+          <label className="workflow-field">
+            Nhà máy
+            <select
+              value={site}
+              disabled={operation}
+              onChange={(event) => {
+                setSite(event.currentTarget.value);
+                setLoading(Boolean(month));
+                setRows([]);
+                setRoster([]);
+                setFilter("");
+                setEdit(null);
+              }}
+            >
+              <option value="">Cả hai nhà máy</option>
+              {Object.entries(workplaceSiteNames).map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {role !== "EMPLOYEE" && (
           <label className="workflow-field">
             Nhân viên
@@ -231,23 +229,16 @@ function Timesheet({ role }: { role: Role }) {
           <RefreshCw size={16} /> Làm mới
         </button>
       </div>
-      {role === "HR" && (
+      {canExport && (
         <div className="workflow-exports">
           <div>
-            <strong>Bảng tính cho quản lý</strong>
-            <p>
-              {statusLabels[publication?.status ?? "PENDING"] ?? "Chờ cập nhật"} · Cập nhật lần cuối{" "}
-              {publication?.updatedAt
-                ? new Date(publication.updatedAt).toLocaleString("vi-VN", {
-                    timeZone: businessZone,
-                  })
-                : "—"}
-            </p>
+            <strong>Xuất bảng công</strong>
+            <p>Tệp tải xuống áp dụng bộ lọc đang chọn.</p>
           </div>
           <div className="workflow-actions">
             <button
               className="workflow-button secondary"
-              disabled={loading || operation || publication?.status !== "SUCCESS"}
+              disabled={loading || operation || !month}
               onClick={() => download("xlsx")}
             >
               <Download size={16} /> Tải bảng tính (.xlsx)
@@ -326,7 +317,7 @@ function Timesheet({ role }: { role: Role }) {
                   <td>
                     <strong>{row.employeeName}</strong>
                     <small>
-                      {row.employeeId} · {row.siteId === "SITE-LA" ? "Long An" : "Bình Dương"}
+                      {row.employeeId} · {siteName(row.siteId)}
                     </small>
                   </td>
                   <td>{dayLabel(row.workDate)}</td>
@@ -338,7 +329,7 @@ function Timesheet({ role }: { role: Role }) {
                       {labels[row.status]}
                     </span>
                     {row.reviewFlag && row.status === "COMPLETE" && <small>Cần HR xác nhận</small>}
-                    {role === "HR" && row.status === "MISSING_EXIT" && (
+                    {canExport && row.status === "MISSING_EXIT" && (
                       <button
                         className="workflow-text-button"
                         disabled={operation}

@@ -197,3 +197,12 @@ CREATE TABLE IF NOT EXISTS workplace_session (
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workplace_session_expiry ON workplace_session(expires_at);
+CREATE INDEX IF NOT EXISTS idx_workplace_session_user ON workplace_session(username, expires_at);
+
+CREATE TABLE IF NOT EXISTS workplace_login_history (
+  session_id VARCHAR(36) PRIMARY KEY,
+  username VARCHAR(60) NOT NULL REFERENCES workplace_account(username),
+  signed_in_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  device_label VARCHAR(80) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workplace_login_history_user ON workplace_login_history(username, signed_in_at);

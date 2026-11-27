@@ -14,7 +14,7 @@ Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose
 | `TMC_ADMIN_USERNAME`, `TMC_ADMIN_PASSWORD` | Khởi tạo quản trị viên đầu tiên. Mặc định username là `admin`; mật khẩu do người triển khai đặt. |
 | `TMC_SESSION_SECURE`, `TMC_CORS_ORIGINS` | Cookie mặc định Secure. Đặt origin chính xác và chỉ tắt Secure khi kiểm tra HTTP cục bộ. |
 | `TMC_DB_USERNAME`, `TMC_DB_PASSWORD` | Thông tin kết nối H2 dạng tệp. Mặc định `sa` với mật khẩu trống cho máy cá nhân. |
-| `tmc.edge.site`, `tmc.edge.station` | `SITE-BD` và `BD-G01`. Trạm ra khởi tạo là `BD-G01-OUT`. |
+| `tmc.edge.site`, `tmc.edge.station` | Nhà máy mặc định là `SITE-BD`, với `BD-G01` và `BD-G01-OUT`. Long An có `LA-G01` và `LA-G01-OUT`. |
 | `tmc.qr.ttl-seconds`, `tmc.qr.keystore` | QR hiệu lực 30 giây. Có thể cấu hình PKCS#12 và mật khẩu qua `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 khi khởi động lại. QR đã phát trước khi đổi khóa cần được cấp mới. |
 
 ## API bản nộp
@@ -30,7 +30,7 @@ Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose
 | `GET/POST /workplace/v1/accounts`, `PATCH /workplace/v1/accounts/{username}` | Chỉ Quản trị viên, quản lý tài khoản và trạng thái. |
 | `GET/POST /admin/v1/stations`, `PATCH /admin/v1/stations/{id}` | Quản lý registry trạm, hướng, nhóm và giờ hoạt động. |
 | `GET /attendance/v1/timesheets?month=YYYY-MM` | Tra bảng công trong phạm vi của phiên. |
-| `POST /attendance/v1/timesheets/corrections`, `GET /attendance/v1/timesheets/{csv,xlsx}` | Chỉ Nhân sự, bổ sung giờ ra và xuất báo cáo. |
+| `POST /attendance/v1/timesheets/corrections`, `GET /attendance/v1/timesheets/{csv,xlsx}` | Quản trị viên và Nhân sự bổ sung giờ ra và xuất báo cáo. Tệp lọc theo `month`, `siteId` và `employeeId` đã chọn. |
 
 Xác minh dùng giờ Edge nhận yêu cầu mới. Yêu cầu đã lưu được tra lại bằng `eventId` và dữ liệu gốc, kể cả khi QR đã hết hạn. Bảng công nhận kết quả qua outbox sau khi Edge ghi quyết định và xác nhận phần mềm.
 

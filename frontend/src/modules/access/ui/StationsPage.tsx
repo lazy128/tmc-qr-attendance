@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { request } from "../../shared/http/client";
 import { errorMessage } from "../../shared/lib/error-message";
 import { AppPage } from "../../shared/ui/AppPage";
@@ -7,6 +8,7 @@ import {
   accountApi,
   groupLabel,
   roleLabel,
+  siteName,
   workflow,
   type Account,
   type Group,
@@ -35,12 +37,14 @@ function Administration({ actor }: { actor: string }) {
   const [stationEdit, setStationEdit] = useState<Station | null>(null);
   const [reset, setReset] = useState<Account | null>(null);
   const [role, setRole] = useState<Role>("EMPLOYEE");
+  const [selectedSite, setSelectedSite] = useState("");
   const [tab, setTab] = useState<"accounts" | "stations">("accounts");
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0);
+  const siteId = selectedSite || registry?.siteId || "";
   useEffect(() => {
     const controller = new AbortController();
     void Promise.all([workflow.stations(controller.signal), accountApi.list(controller.signal)])
@@ -83,7 +87,7 @@ function Administration({ actor }: { actor: string }) {
     const form = event.currentTarget;
     const body = Object.fromEntries(new FormData(form));
     void run(async () => {
-      updateAccount(await accountApi.create({ ...body, siteId: registry!.siteId }));
+      updateAccount(await accountApi.create({ ...body, siteId }));
       form.reset();
       setRole("EMPLOYEE");
       setNotice("Đã tạo tài khoản. Người dùng sẽ đổi mật khẩu ở lần đăng nhập đầu.");
@@ -112,7 +116,7 @@ function Administration({ actor }: { actor: string }) {
           body: JSON.stringify(
             stationEdit
               ? { gateId, gate, status: value("status") }
-              : { gateId, gate, siteId: registry!.siteId, stationId: value("stationId") },
+              : { gateId, gate, siteId, stationId: value("stationId") },
           ),
         },
       );
@@ -151,7 +155,9 @@ function Administration({ actor }: { actor: string }) {
     );
   if (!registry) return <p role="status">Đang tải cấu hình…</p>;
   const associateEmployee = role === "EMPLOYEE" || role === "MANAGER";
-  const activeStations = registry.stations.filter((station) => station.status === "ACTIVE");
+  const siteStations = registry.stations.filter((station) => station.siteId === siteId);
+  const activeStations = siteStations.filter((station) => station.status === "ACTIVE");
+  const siteAccounts = accounts.filter((account) => !account.siteId || account.siteId === siteId);
   return (
     <div className="grid gap-4">
       <div className="workflow-actions" aria-label="Quản trị">
@@ -179,7 +185,30 @@ function Administration({ actor }: { actor: string }) {
         >
           Trạm quét
         </button>
+        <Link to="/attendance" className="workflow-button secondary">
+          Mở bảng công & Excel
+        </Link>
       </div>
+      <label className="workflow-field w-full max-w-72">
+        Nhà máy quản lý
+        <select
+          value={siteId}
+          disabled={busy}
+          onChange={(event) => {
+            setSelectedSite(event.target.value);
+            setStationEdit(null);
+            setReset(null);
+            setError("");
+            setNotice("");
+          }}
+        >
+          {(registry.siteIds ?? [registry.siteId]).map((id) => (
+            <option key={id} value={id}>
+              {siteName(id)}
+            </option>
+          ))}
+        </select>
+      </label>
       {error && (
         <p className="workflow-error" role="alert">
           {error}
@@ -200,12 +229,13 @@ function Administration({ actor }: { actor: string }) {
                   <tr>
                     <th scope="col">Tài khoản</th>
                     <th scope="col">Vai trò</th>
+                    <th scope="col">Nhà máy</th>
                     <th scope="col">Trạng thái</th>
                     <th scope="col">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {accounts.map((account) => (
+                  {siteAccounts.map((account) => (
                     <tr key={account.username}>
                       <td>
                         <strong>{account.displayName}</strong>
@@ -219,6 +249,7 @@ function Administration({ actor }: { actor: string }) {
                         </small>
                       </td>
                       <td>{roleLabel[account.role]}</td>
+                      <td>{account.siteId ? siteName(account.siteId) : "Toàn hệ thống"}</td>
                       <td>
                         {!account.enabled
                           ? "Đã khóa"
@@ -376,7 +407,7 @@ function Administration({ actor }: { actor: string }) {
               {role === "GUARD" && (
                 <label className="workflow-field">
                   Trạm được giao
-                  <select name="stationId" defaultValue="" required>
+                  <select name="stationId" key={siteId} defaultValue="" required>
                     <option disabled value="">
                       Chọn trạm
                     </option>
@@ -389,7 +420,7 @@ function Administration({ actor }: { actor: string }) {
                 </label>
               )}
             </div>
-            {associateEmployee && <p>Nhà máy {registry.siteId}</p>}
+            {associateEmployee && <p>Nhà máy {siteName(siteId)}</p>}
             <button
               className="workflow-button"
               disabled={busy || (role === "GUARD" && !activeStations.length)}
@@ -401,7 +432,7 @@ function Administration({ actor }: { actor: string }) {
       ) : (
         <>
           <section className="workflow-card grid gap-3">
-            <h2>Trạm tại {registry.siteId}</h2>
+            <h2>Trạm tại {siteName(siteId)}</h2>
             <div className="workflow-table-wrap">
               <table className="workflow-table">
                 <thead>
@@ -414,7 +445,7 @@ function Administration({ actor }: { actor: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {registry.stations.map((station) => (
+                  {siteStations.map((station) => (
                     <tr key={station.stationId}>
                       <td>{station.stationId}</td>
                       <td>{station.gate.name}</td>
@@ -440,7 +471,7 @@ function Administration({ actor }: { actor: string }) {
             </div>
           </section>
           <form
-            key={stationEdit?.stationId ?? "new"}
+            key={stationEdit?.stationId ?? siteId}
             className="workflow-card grid gap-3"
             onSubmit={saveStation}
           >

@@ -38,32 +38,44 @@ public final class JdbcStationRegistry implements StationAuthenticator, StationS
   };
   private final JdbcTemplate jdbc;
   private final String site;
+  private final List<String> sites;
   private final String assignedStation;
 
   public JdbcStationRegistry(JdbcTemplate jdbc, String site, String assignedStation) {
+    this(jdbc, site, assignedStation, List.of(site));
+    create(site, assignedStation, assignedStation);
+  }
+
+  public JdbcStationRegistry(JdbcTemplate jdbc, String site, String assignedStation, List<String> sites) {
     this.jdbc = jdbc;
     this.site = site;
+    this.sites = List.copyOf(sites);
     this.assignedStation = assignedStation;
-    create(assignedStation, assignedStation);
   }
 
   public String site() { return site; }
 
+  public List<String> sites() { return sites; }
+
+  public boolean supports(String siteId) { return siteId != null && sites.contains(siteId); }
+
   public String assignedStation() { return assignedStation; }
 
   public List<Station> list() {
-    return jdbc.query("SELECT * FROM station_registry WHERE site_id = ? ORDER BY station_id", MAPPER, site);
+    return sites.stream().flatMap(id -> jdbc.query(
+        "SELECT * FROM station_registry WHERE site_id = ? ORDER BY station_id", MAPPER, id).stream()).toList();
   }
 
   public Optional<Station> find(String id) {
-    return jdbc.query("SELECT * FROM station_registry WHERE site_id = ? AND station_id = ?", MAPPER, site, id)
-        .stream().findFirst();
+    return jdbc.query("SELECT * FROM station_registry WHERE station_id = ?", MAPPER, id)
+        .stream().filter(station -> supports(station.siteId())).findFirst();
   }
 
-  public boolean create(String id, String gate) {
+  public boolean create(String siteId, String id, String gate) {
+    if (!supports(siteId)) throw new IllegalArgumentException("Nhà máy không thuộc phạm vi trạm.");
     try {
       jdbc.update("INSERT INTO station_registry (site_id, station_id, gate_id, status) VALUES (?, ?, ?, 'ACTIVE')",
-          site, id, gate);
+          siteId, id, gate);
       return true;
     } catch (DuplicateKeyException duplicate) {
       return false;
@@ -71,16 +83,21 @@ public final class JdbcStationRegistry implements StationAuthenticator, StationS
   }
 
   public void seedGate(String id, Gate gate) {
-    create(id, id);
-    if (find(id).filter(station -> station.gate().name().equals(id)).isPresent()) setGate(id, gate);
+    create(gate.siteId(), id, id);
+    writeGate(id, gate, true);
   }
 
   public void setGate(String id, Gate gate) {
+    writeGate(id, gate, false);
+  }
+
+  private void writeGate(String id, Gate gate, boolean onlyUnconfigured) {
     jdbc.update("""
         UPDATE station_registry SET display_name=?, gate_type=?, allowed_groups=?, directions=?, opens_at=?, closes_at=?
         WHERE site_id=? AND station_id=?
-        """, gate.name(), gate.type().name(), names(gate.allowedGroups()), names(gate.directions()),
-        gate.opensAt(), gate.closesAt(), site, id);
+        """ + (onlyUnconfigured ? " AND display_name IS NULL" : ""),
+        gate.name(), gate.type().name(), names(gate.allowedGroups()), names(gate.directions()),
+        gate.opensAt(), gate.closesAt(), gate.siteId(), id);
   }
 
   private static String names(Iterable<? extends Enum<?>> values) {
@@ -90,10 +107,12 @@ public final class JdbcStationRegistry implements StationAuthenticator, StationS
   }
 
   public Optional<Station> update(String id, String gate, Status status) {
+    var current = find(id);
+    if (current.isEmpty()) return Optional.empty();
     int updated = jdbc.update("""
         UPDATE station_registry SET gate_id = COALESCE(?, gate_id), status = COALESCE(?, status)
         WHERE site_id = ? AND station_id = ?
-        """, gate, status == null ? null : status.name(), site, id);
+        """, gate, status == null ? null : status.name(), current.get().siteId(), id);
     return updated == 0 ? Optional.empty() : find(id);
   }
 

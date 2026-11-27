@@ -74,6 +74,13 @@ public final class JdbcAttendanceStore implements AttendanceRecordStore {
         """, (rs, row) -> map(rs), employeeId, Timestamp.from(start), Timestamp.from(end));
   }
 
+  public List<AttendanceRecord> recentAcceptedForEmployee(String employeeId) {
+    return jdbc.query("""
+        SELECT * FROM attendance_record WHERE employee_id=? AND eligible=TRUE
+        ORDER BY scanned_at DESC,event_id DESC LIMIT 10
+        """, (rs, row) -> map(rs), employeeId);
+  }
+
   private AttendanceRecord map(ResultSet rs) throws SQLException {
     return new AttendanceRecord(
         rs.getString("event_id"),

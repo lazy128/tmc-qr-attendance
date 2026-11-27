@@ -39,6 +39,12 @@ beforeEach(() => {
   vi.stubEnv("VITE_QR_SCAN_ORIGIN", "");
   vi.spyOn(workflow, "employee").mockResolvedValue(staff);
   vi.spyOn(workflow, "attendance").mockResolvedValue(attendance);
+  vi.spyOn(workflow, "activity").mockResolvedValue({
+    employeeId: staff.id,
+    otherSessions: 0,
+    recentLogins: [],
+    scans: [],
+  });
 });
 
 async function advance(ms: number) {
@@ -97,7 +103,7 @@ it("hides the QR once it expires after a failed refresh", async () => {
 
 it("renders a phone link and confirms attendance without replacing the current QR", async () => {
   vi.useFakeTimers();
-  vi.stubEnv("VITE_QR_SCAN_ORIGIN", "http://192.168.1.25:5173");
+  vi.stubEnv("VITE_QR_SCAN_ORIGIN", "https://192.168.1.25:5173");
   const issue = vi.spyOn(workflow, "pass").mockResolvedValue({
     ...attendance,
     token: "current",
@@ -115,7 +121,7 @@ it("renders a phone link and confirms attendance without replacing the current Q
   const canvas = screen.getByRole("img", { name: "Mã QR truy cập" });
   expect(QRCode.toCanvas).toHaveBeenLastCalledWith(
     canvas,
-    "http://192.168.1.25:5173/gate#qr=current",
+    "https://192.168.1.25:5173/gate#qr=current",
     expect.any(Object),
   );
   expect(screen.getByRole("status")).toHaveTextContent("Chưa vào");

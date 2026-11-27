@@ -48,9 +48,11 @@ public class StationRegistryController {
   @GetMapping
   public StationList list(@RequestHeader(value = "Authorization", required = false) String authorization) {
     String actor = authenticate(authorization);
-    if (permissions.permits(actor, "stations:manage")) return new StationList(stations.list(), true, stations.site());
+    if (permissions.permits(actor, "stations:manage")) return new StationList(stations.list(), true, stations.site(), stations.sites());
     if (permissions.permits(actor, "stations:read-assigned")) {
-      return new StationList(stations.find(identity.assignedStation(actor).orElse(stations.assignedStation())).stream().toList(), false, stations.site());
+      var assigned = stations.find(identity.assignedStation(actor).orElse(stations.assignedStation()));
+      var site = assigned.map(Station::siteId).orElse(stations.site());
+      return new StationList(assigned.stream().toList(), false, site, List.of(site));
     }
     throw forbidden();
   }
@@ -61,13 +63,13 @@ public class StationRegistryController {
   public Station create(@RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestBody CreateStation body) {
     String actor = manager(authorization);
-    if (!stations.site().equals(body.siteId())) throw new IllegalArgumentException("Station must belong to this Edge's site");
+    if (!stations.supports(body.siteId())) throw new IllegalArgumentException("Chọn nhà máy hợp lệ.");
     validateId(body.stationId(), "stationId");
     validateId(body.gateId(), "gateId");
-    if (!stations.create(body.stationId(), body.gateId())) {
+    if (!stations.create(body.siteId(), body.stationId(), body.gateId())) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "Station already registered");
     }
-    if (body.gate() != null) stations.setGate(body.stationId(), gate(body.gate()));
+    if (body.gate() != null) stations.setGate(body.stationId(), gate(body.siteId(), body.gate()));
     audit(actor, "STATION_CREATE", body.stationId());
     return stations.find(body.stationId()).orElseThrow();
   }
@@ -80,9 +82,9 @@ public class StationRegistryController {
     validateId(id, "stationId");
     if (body.gateId() == null && body.status() == null && body.gate() == null) throw new IllegalArgumentException("No station changes supplied");
     if (body.gateId() != null) validateId(body.gateId(), "gateId");
-    stations.update(id, body.gateId(), body.status())
+    var updated = stations.update(id, body.gateId(), body.status())
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Station not found"));
-    if (body.gate() != null) stations.setGate(id, gate(body.gate()));
+    if (body.gate() != null) stations.setGate(id, gate(updated.siteId(), body.gate()));
     audit(actor, "STATION_UPDATE", id);
     return stations.find(id).orElseThrow();
   }
@@ -112,14 +114,14 @@ public class StationRegistryController {
     }
   }
 
-  private Gate gate(GateSettings options) {
+  private Gate gate(String site, GateSettings options) {
     if (options.name() == null || options.name().isBlank() || options.name().length() > 150
         || options.type() == null || options.allowedGroups() == null || options.allowedGroups().isEmpty()
         || options.directions() == null || options.directions().size() != 1
         || (options.opensAt() == null) != (options.closesAt() == null)) {
       throw new IllegalArgumentException("Supply a gate name, type, groups, one direction and an optional time range.");
     }
-    return new Gate(options.name(), stations.site(), options.type(), options.allowedGroups(),
+    return new Gate(options.name(), site, options.type(), options.allowedGroups(),
         options.directions(), options.opensAt(), options.closesAt());
   }
 
@@ -127,5 +129,5 @@ public class StationRegistryController {
       LocalTime opensAt, LocalTime closesAt) {}
   public record CreateStation(String siteId, String stationId, String gateId, GateSettings gate) {}
   public record UpdateStation(String gateId, Status status, GateSettings gate) {}
-  public record StationList(List<Station> stations, boolean canManage, String siteId) {}
+  public record StationList(List<Station> stations, boolean canManage, String siteId, List<String> siteIds) {}
 }

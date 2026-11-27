@@ -78,6 +78,12 @@ test("associates QR with login, retries an ambiguous scan and displays the persi
     if (existing.status() === 401) await activate(admin.request, adminName, adminPassword!);
     await adminPage.goto(base + "/stations");
     await expect(adminPage.getByRole("heading", { name: "Danh sách tài khoản" })).toBeVisible();
+    await adminPage.getByLabel("Nhà máy quản lý").selectOption("SITE-LA");
+    await adminPage.getByRole("button", { name: "Trạm quét" }).click();
+    await expect(adminPage.getByRole("heading", { name: "Trạm tại Long An" })).toBeVisible();
+    await expect(adminPage.getByText("LA-G01", { exact: true })).toBeVisible();
+    await expect(adminPage.getByText("BD-G01", { exact: true })).toHaveCount(0);
+    await adminPage.getByRole("button", { name: "Tài khoản" }).click();
     await adminPage.getByLabel("Tên đăng nhập").fill("employee-" + suffix);
     await adminPage.getByLabel("Mật khẩu tạm").fill(password);
     await adminPage.getByLabel("Mã nhân viên").fill(employeeId);
@@ -91,13 +97,13 @@ test("associates QR with login, retries an ambiguous scan and displays the persi
     await createAccount(admin.request, {
       username: "entry-" + suffix,
       role: "GUARD",
-      stationId: "BD-G01",
+      stationId: "LA-G01",
       password,
     });
     await createAccount(admin.request, {
       username: "exit-" + suffix,
       role: "GUARD",
-      stationId: "BD-G01-OUT",
+      stationId: "LA-G01-OUT",
       password,
     });
     await createAccount(admin.request, { username: "hr-" + suffix, role: "HR", password });
@@ -117,12 +123,15 @@ test("associates QR with login, retries an ambiguous scan and displays the persi
     await person.getByRole("button", { name: "Lưu mật khẩu" }).click();
     await signIn(person, "employee-" + suffix, password + "-updated");
     await expect(person.getByRole("heading", { name: employeeName })).toBeVisible();
+    await expect(
+      person.getByRole("navigation").getByRole("link", { name: "Trạm quét" }),
+    ).toHaveCount(0);
     await expect(person.getByRole("combobox")).toHaveCount(0);
     await expect(person.getByRole("status")).toContainText("Chưa vào");
 
     const scanner = await entry.newPage();
     await scanner.goto(base + "/gate");
-    await expect(scanner.getByText("Bình Dương – Cổng vào 1")).toBeVisible();
+    await expect(scanner.getByText("Long An – Cổng vào 1")).toBeVisible();
     const requests: string[] = [];
     await scanner.route("**/access/v1/verify", async (route) => {
       requests.push(route.request().postData() ?? "");
@@ -175,6 +184,33 @@ test("associates QR with login, retries an ambiguous scan and displays the persi
       await expect(row.getByRole("cell").nth(3)).toHaveText(/^\d\d:\d\d$/, { timeout: 1000 });
     }).toPass({ timeout: 15_000 });
     await expect(payroll.getByRole("button", { name: "Xuất CSV cho lương" })).toBeEnabled();
+
+    await adminPage.getByRole("link", { name: "Mở bảng công & Excel" }).click();
+    const reportSite = adminPage.getByRole("combobox", { name: "Nhà máy", exact: true });
+    const filtered = adminPage.waitForResponse(
+      (response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname.endsWith("/attendance/v1/timesheets") &&
+          url.searchParams.get("siteId") === "SITE-LA"
+        );
+      },
+      { timeout: 10000 },
+    );
+    await reportSite.selectOption("SITE-LA", { timeout: 7000 });
+    expect((await filtered).ok()).toBe(true);
+    await expect(reportSite).toHaveValue("SITE-LA");
+    const adminRow = adminPage.getByRole("row").filter({ hasText: employeeId });
+    await expect(adminRow).toContainText("Long An");
+    const downloaded = adminPage.waitForEvent("download", { timeout: 12000 });
+    await adminPage.getByRole("button", { name: "Tải bảng tính (.xlsx)" }).click();
+    expect((await downloaded).suggestedFilename()).toMatch(/-SITE-LA\.xlsx$/);
+    await reportSite.selectOption("SITE-BD", { timeout: 7000 });
+    await expect(adminRow).toHaveCount(0);
+
+    await person.goto(base + "/gate");
+    await expect(person.getByRole("alert")).toContainText("Bảo vệ");
+    await expect(person.getByLabel("Chọn ảnh QR")).toHaveCount(0);
   } finally {
     await Promise.all([admin.close(), entry.close(), exit.close(), employee.close(), hr.close()]);
   }

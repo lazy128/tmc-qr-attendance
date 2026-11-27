@@ -8,7 +8,7 @@ Hệ thống chấm công bằng QR dành cho Assignment M2. Edge xác minh lư�
 
 ## Chạy bản nộp
 
-Cần **Java 21** và **Node.js 24**. Profile mặc định `workplace` tạo DB H2 tại `backend/data/tmc-workplace.mv.db` và hai trạm vào, ra ở Bình Dương. Quản trị viên tự khai báo tài khoản và nhân viên.
+Cần **Java 21** và **Node.js 24**. Profile mặc định `workplace` lưu dữ liệu H2 tại `backend/data/tmc-workplace.mv.db` và khởi tạo cổng vào, cổng ra tại cả Bình Dương lẫn Long An. Quản trị viên khai báo tài khoản và nhân viên theo nhà máy.
 
 ~~~powershell
 # Terminal backend, chạy từ thư mục gốc
@@ -25,7 +25,7 @@ $env:VITE_EDGE_API_URL = '/edge-api'
 npm run dev -- --strictPort
 ~~~
 
-Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoản quản trị và đổi mật khẩu tạm. Trong **Quản trị**, tạo một nhân viên, một tài khoản Nhân sự và hai tài khoản bảo vệ. Gán bảo vệ cổng vào cho `BD-G01` và bảo vệ cổng ra cho `BD-G01-OUT`. Mỗi tài khoản đổi mật khẩu ở lần đầu đăng nhập.
+Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoản quản trị và đổi mật khẩu tạm. Trong **Quản trị**, chọn nhà máy để tạo nhân viên và gán bảo vệ vào trạm. Bình Dương dùng `BD-G01` và `BD-G01-OUT`. Long An dùng `LA-G01` và `LA-G01-OUT`. Mỗi tài khoản đổi mật khẩu ở lần đầu đăng nhập.
 
 | Vai trò | Màn hình và quyền |
 | --- | --- |
@@ -33,7 +33,7 @@ Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoả
 | Quản lý | Mở QR của mình và xem bảng công trong cùng bộ phận, nhà máy. |
 | Bảo vệ | Quét QR tại đúng trạm được gán. Hướng vào hoặc ra lấy từ cấu hình trạm. |
 | Nhân sự | Xem bảng công, bổ sung giờ ra kèm lý do và xuất CSV hoặc XLSX theo tháng. |
-| Quản trị viên | Tạo, khóa, mở khóa và đặt lại mật khẩu tài khoản. Cấu hình trạm, hướng, nhóm và giờ hoạt động. |
+| Quản trị viên | Quản lý tài khoản và trạm theo nhà máy. Dùng **Bảng công & Excel** để xem, bổ sung giờ ra và tải Excel hoặc CSV theo bộ lọc. |
 
 ### Quét bằng hai thiết bị
 
@@ -43,6 +43,8 @@ Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoả
 - Khi kiểm tra qua Wi‑Fi riêng với HTTP, đặt `-FrontendOrigin 'http://192.168.1.25:5173'` và `-AllowHttp` ở backend, dùng IP LAN thật. Trình duyệt trên điện thoại có thể **Chụp mã QR** hoặc mở liên kết đọc bởi Camera. `VITE_QR_SCAN_ORIGIN` đặt cùng địa chỉ nếu màn hình nhân viên được mở qua localhost.
 - Khi triển khai, phục vụ ứng dụng và proxy `/edge-api` trên cùng origin HTTPS, giữ backend ở mạng riêng và khai báo origin đó trong `TMC_CORS_ORIGINS`.
 
+Trong **Mã QR của tôi → Hoạt động tài khoản**, nhân viên xem giờ, cơ sở và cổng của các lượt chấm công gần đây, cùng thời điểm và loại trình duyệt của các lần đăng nhập mới. **Đăng xuất phiên khác** giữ phiên hiện tại, đóng các phiên còn lại và thu hồi mã QR đã phát. Nếu nghi lộ mật khẩu, hãy đổi mật khẩu để ngăn đăng nhập lại. Lịch sử đăng nhập ghi nhận phiên sử dụng tài khoản. Bảo vệ đối chiếu người có mặt với thông tin nhân viên tại cổng.
+
 ### Xử lý sự cố và kiểm soát dữ liệu
 
 - **Mất mạng.** Trạm hiển thị lượt chờ. Khi kết nối lại, Kiosk gửi đúng dữ liệu với cùng `eventId`, kể cả khi phản hồi đầu tiên bị mất. Nếu tải lại trang, chỉ mã lượt được giữ trong phiên tab để tra kết quả đã lưu. Trường hợp máy chủ chưa nhận mã trước khi hết hạn, bảo vệ quét mã mới. Giờ công dùng giờ Edge nhận lượt.
@@ -50,7 +52,7 @@ Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoả
 - **Đúng nhân viên.** API cấp QR lấy nhân viên từ phiên đăng nhập. API quét kiểm tra vai trò Bảo vệ và chính xác trạm được giao. Kiosk hiện tên nhân viên đã xác minh để đối chiếu tại cổng.
 - **JWT.** Phiên đăng nhập dùng JWT HS256 trong cookie `HttpOnly`, `SameSite=Strict` và mặc định `Secure`. DB kiểm tra phiên còn hiệu lực. Đổi mật khẩu, đặt lại mật khẩu và khóa tài khoản thu hồi các phiên liên quan. Mật khẩu được lưu dưới dạng BCrypt. QR dùng JWT ES256 có thời hạn 30 giây và phiên bản thẻ.
 - **DB.** Hồ sơ, tài khoản, phiên, trạm, lượt quét, chấm công và nhật ký được lưu trong H2 dạng tệp. Sao lưu tệp DB khi backend đã dừng. Script tạo khóa phiên ở `backend/data/workplace-session.key`. Giữ khóa và bản sao DB riêng tư. Bảng tính được tạo từ chấm công đã lưu và ghi ra `backend/exports/workplace`.
-- **Phạm vi chạy.** Bản nộp ghi nhận chấm công trong phần mềm trên một Edge và một DB. Phần điều khiển turnstile vật lý và đồng bộ an toàn nhiều Edge cần tích hợp riêng. Các profile kiểm thử kiến trúc cũ dùng dữ liệu riêng và chỉ được chọn tường minh.
+- **Phạm vi chạy.** Bình Dương và Long An dùng chung một Edge và một DB trong bản nộp. Trạm, quyền quét và báo cáo phân theo nhà máy. Điều khiển turnstile vật lý và đồng bộ nhiều Edge là phần tích hợp riêng.
 
 ## Kiểm thử
 

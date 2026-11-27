@@ -3,6 +3,7 @@ package tmc.bootstrap;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
@@ -23,12 +24,13 @@ import tmc.access.api.ApiError;
 import tmc.access.domain.port.CredentialReader;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.attendance.application.TimesheetCalculator;
+import tmc.attendance.infrastructure.JdbcAttendanceStore;
 import tmc.attendance.infrastructure.TimesheetService;
-import tmc.shared.StaffDirectory;
 import tmc.shared.StaffDirectory.Employee;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.auth.WorkplaceAccounts;
 import tmc.shared.auth.WorkplaceAccounts.Account;
+import tmc.shared.auth.WorkplaceAccounts.LoginEvent;
 import tmc.shared.auth.WorkplaceAccounts.Role;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
@@ -43,19 +45,22 @@ public class WorkplaceController {
   private final IssueQrToken issue;
   private final JdbcStationRegistry stations;
   private final TimesheetService timesheets;
+  private final JdbcAttendanceStore attendanceRecords;
   private final TimesheetCalculator calculator;
   private final AuditWriter audit;
   private final ClockProvider clock;
   private final boolean secureCookie;
 
   public WorkplaceController(WorkplaceAccounts accounts, CredentialReader credentials, IssueQrToken issue,
-      JdbcStationRegistry stations, TimesheetService timesheets, TimesheetCalculator calculator,
+      JdbcStationRegistry stations, TimesheetService timesheets, JdbcAttendanceStore attendanceRecords,
+      TimesheetCalculator calculator,
       AuditWriter audit, ClockProvider clock, @Value("${tmc.accounts.cookie-secure:true}") boolean secureCookie) {
     this.accounts = accounts;
     this.credentials = credentials;
     this.issue = issue;
     this.stations = stations;
     this.timesheets = timesheets;
+    this.attendanceRecords = attendanceRecords;
     this.calculator = calculator;
     this.audit = audit;
     this.clock = clock;
@@ -63,8 +68,9 @@ public class WorkplaceController {
   }
 
   @PostMapping("/auth/v1/login")
-  public ResponseEntity<Account> login(@RequestBody Login body) {
-    var login = accounts.login(body.username(), body.password()).orElseThrow(() -> new ResponseStatusException(
+  public ResponseEntity<Account> login(@RequestBody Login body,
+      @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
+    var login = accounts.login(body.username(), body.password(), describeDevice(userAgent)).orElseThrow(() -> new ResponseStatusException(
         HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ. Sau nhiều lần thử sai, hãy đợi một phút."));
     audit(login.account().username(), "SESSION_LOGIN", login.account().username());
     return noStore().header(HttpHeaders.SET_COOKIE, cookie(login.token(), login.lifetime())).body(login.account());
@@ -79,6 +85,15 @@ public class WorkplaceController {
   public ResponseEntity<Void> logout(@RequestHeader(value = AUTH, required = false) String auth) {
     accounts.logout(auth);
     return clearSession();
+  }
+
+  @PostMapping("/auth/v1/sessions/close-others")
+  public ResponseEntity<ClosedSessions> closeOtherSessions(@RequestHeader(value = AUTH, required = false) String auth) {
+    var actor = active(auth);
+    var count = accounts.closeOtherSessions(auth).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+        "Phiên hiện tại đã kết thúc. Vui lòng đăng nhập lại."));
+    if (count > 0) audit(actor.username(), "SESSION_CLOSE_OTHERS", actor.username());
+    return noStore().body(new ClosedSessions(count));
   }
 
   @PostMapping("/auth/v1/password")
@@ -102,6 +117,17 @@ public class WorkplaceController {
     return noStore().body(attendanceFor(employee(active(auth)).id(), clock.now()));
   }
 
+  @GetMapping("/workplace/v1/me/activity")
+  public ResponseEntity<EmployeeActivity> activity(@RequestHeader(value = AUTH, required = false) String auth) {
+    var employee = employee(active(auth));
+    var login = accounts.loginActivity(auth).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+    var scans = attendanceRecords.recentAcceptedForEmployee(employee.id()).stream().map(record -> {
+      var name = stations.find(record.stationId()).map(station -> station.gate().name()).orElse(record.stationId());
+      return new ScanActivity(record.eventId(), record.scannedAt(), record.siteId(), name, record.direction(), record.suspicious());
+    }).toList();
+    return noStore().body(new EmployeeActivity(employee.id(), login.otherSessions(), login.recentLogins(), scans));
+  }
+
   @PostMapping("/workplace/v1/me/qr")
   public ResponseEntity<?> qr(@RequestHeader(value = AUTH, required = false) String auth) {
     var actor = active(auth);
@@ -113,6 +139,8 @@ public class WorkplaceController {
           CorrelationIdFilter.currentId(), false));
     }
     var token = issue.issue(id, credential.deviceHash());
+    // A request racing with session revocation must not return a newly rotated credential.
+    active(auth);
     audit(actor.username(), "QR_ISSUE", id);
     var attendance = attendanceFor(employee.id(), clock.now());
     return noStore().body(new Pass(employee.id(), token.token(), token.expiresAt(), attendance.status(),
@@ -139,8 +167,11 @@ public class WorkplaceController {
       @RequestBody WorkplaceAccounts.NewAccount body) {
     var actor = administrator(auth);
     if ((body.role() == Role.EMPLOYEE || body.role() == Role.MANAGER)
-        && (body.siteId() == null || !StaffDirectory.siteFor(stations.site()).equals(StaffDirectory.siteFor(body.siteId())))) {
-      throw new IllegalArgumentException("Nhân viên phải thuộc nhà máy " + stations.site() + ".");
+        && !stations.supports(body.siteId())) {
+      throw new IllegalArgumentException("Chọn Bình Dương hoặc Long An cho nhân viên.");
+    }
+    if (body.role() == Role.GUARD && (body.stationId() == null || stations.find(body.stationId()).isEmpty())) {
+      throw new IllegalArgumentException("Chọn trạm thuộc nhà máy được quản lý.");
     }
     try {
       var created = accounts.create(body);
@@ -203,9 +234,25 @@ public class WorkplaceController {
     audit.append(actor, action, target, "SUCCESS", CorrelationIdFilter.currentId(), clock.now());
   }
 
+  private static String describeDevice(String userAgent) {
+    if (userAgent == null) return "Thiết bị chưa xác định";
+    String agent = userAgent.toLowerCase(Locale.ROOT);
+    String device = agent.contains("iphone") ? "iPhone" : agent.contains("ipad") ? "iPad"
+        : agent.contains("android") ? "Android" : agent.contains("windows") ? "Windows"
+        : agent.contains("macintosh") ? "macOS" : agent.contains("linux") ? "Linux" : "Thiết bị chưa xác định";
+    String browser = agent.contains("edg") ? "Edge" : agent.contains("chrome") || agent.contains("crios") ? "Chrome"
+        : agent.contains("firefox") || agent.contains("fxios") ? "Firefox" : agent.contains("safari") ? "Safari" : "";
+    return browser.isEmpty() ? device : device + " · " + browser;
+  }
+
   public record Login(String username, String password) {}
   public record Password(String current, String replacement) {}
   public record AccountUpdate(Boolean enabled, String password) {}
+  public record ClosedSessions(int closed) {}
+  public record ScanActivity(String eventId, Instant scannedAt, String siteId, String stationName, String direction,
+      boolean suspicious) {}
+  public record EmployeeActivity(String employeeId, int otherSessions, List<LoginEvent> recentLogins,
+      List<ScanActivity> scans) {}
   public record Attendance(String employeeId, String status, Instant lastEntry, Instant lastExit) {}
   public record Pass(String employeeId, String token, Instant expiresAt, String status, Instant lastEntry, Instant lastExit) {}
 }

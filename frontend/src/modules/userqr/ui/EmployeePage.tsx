@@ -6,9 +6,11 @@ import { errorMessage } from "../../shared/lib/error-message";
 import { employeeQrPayload } from "../../shared/lib/qr-link";
 import { AppPage } from "../../shared/ui/AppPage";
 import { RequireAccount } from "../../shared/ui/Auth";
+import { EmployeeActivityPanel } from "./EmployeeActivityPanel";
 import {
   displayTime,
   groupLabel,
+  siteName,
   workflow,
   type AttendanceStatus,
   type Employee,
@@ -189,7 +191,7 @@ function EmployeePass({ employee }: { employee: Employee }) {
         <div>
           <h2>{employee.name}</h2>
           <p>
-            {employee.id} · {groupLabel[employee.accessGroup]} · {employee.siteId}
+            {employee.id} · {groupLabel[employee.accessGroup]} · {siteName(employee.siteId)}
           </p>
         </div>
       </div>
@@ -224,7 +226,9 @@ function EmployeePass({ employee }: { employee: Employee }) {
       </div>
       {canScan && (
         <p className="workflow-qr-hint">
-          Đưa mã vào máy quét tại cổng. Trạng thái ca sẽ tự cập nhật sau khi xác minh.
+          {phoneLink
+            ? "Quét bằng camera điện thoại để mở Trạm quét. Bảo vệ xác nhận lượt quét tại cổng."
+            : "Đưa mã vào camera trong Trạm quét. Camera mặc định của điện thoại sẽ đọc mã này dưới dạng văn bản."}
         </p>
       )}
       {error && (
@@ -281,6 +285,7 @@ function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [qrRevision, setQrRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     workflow
@@ -299,25 +304,33 @@ function EmployeeProfile({ employeeId }: { employeeId: string | null }) {
     return () => controller.abort();
   }, [employeeId, reload]);
   return (
-    <section className="workflow-card workflow-pass">
-      {error && (
-        <div className="grid gap-2">
-          <p role="alert" className="workflow-error">
-            {error}
-          </p>
-          <button
-            className="workflow-button"
-            onClick={() => {
-              setError("");
-              setReload((value) => value + 1);
-            }}
-          >
-            Thử lại
-          </button>
-        </div>
+    <div className="grid gap-4">
+      <section className="workflow-card workflow-pass">
+        {error && (
+          <div className="grid gap-2">
+            <p role="alert" className="workflow-error">
+              {error}
+            </p>
+            <button
+              className="workflow-button"
+              onClick={() => {
+                setError("");
+                setReload((value) => value + 1);
+              }}
+            >
+              Thử lại
+            </button>
+          </div>
+        )}
+        {!error && !employee && <p role="status">Đang tải hồ sơ…</p>}
+        {employee && <EmployeePass key={`${employee.id}-${qrRevision}`} employee={employee} />}
+      </section>
+      {employee && (
+        <EmployeeActivityPanel
+          employeeId={employee.id}
+          onSessionsClosed={() => setQrRevision((revision) => revision + 1)}
+        />
       )}
-      {!error && !employee && <p role="status">Đang tải hồ sơ…</p>}
-      {employee && <EmployeePass key={employee.id} employee={employee} />}
-    </section>
+    </div>
   );
 }

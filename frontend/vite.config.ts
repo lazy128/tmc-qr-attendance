@@ -13,12 +13,26 @@ export default defineConfig(({ mode }) => {
     throw new Error("Set both TMC_DEV_HTTPS_CERT and TMC_DEV_HTTPS_KEY.");
   const target = env["TMC_DEV_PROXY_TARGET"] || "http://127.0.0.1:8084";
   const server: ServerOptions = {};
-  if (cert && key) server.https = { cert: readFileSync(cert), key: readFileSync(key) };
+  if (cert && key) {
+    server.https = { cert: readFileSync(cert), key: readFileSync(key) };
+    server.fs = { allow: [process.cwd()] };
+  }
   server.proxy = {
     "^/edge-api/": {
       target,
       changeOrigin: true,
       rewrite: (path) => path.slice("/edge-api".length),
+      configure: (proxy) => {
+        if (!server.https) return;
+        // The local backend also serves loopback HTTP. Cookies on the HTTPS side stay Secure.
+        proxy.on("proxyRes", (response) => {
+          const cookies = response.headers["set-cookie"];
+          if (cookies)
+            response.headers["set-cookie"] = cookies.map((cookie) =>
+              /(?:^|;)\s*Secure(?:;|$)/i.test(cookie) ? cookie : `${cookie}; Secure`,
+            );
+        });
+      },
     },
   };
   return {

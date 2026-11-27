@@ -277,6 +277,22 @@
   color: var(--workflow-muted);
   text-align: center;
 }
+.workflow-activity-alert {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff4d8;
+}
+.workflow-activity-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.workflow-activity-list li + li {
+  border-top: 1px solid var(--workflow-border);
+  padding-top: 8px;
+}
 .workflow-gate-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(230px, 1fr);

@@ -1,6 +1,7 @@
 package tmc.attendance.api;
 
 import java.nio.file.Files;
+import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -9,6 +10,8 @@ import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -30,6 +33,8 @@ import tmc.attendance.infrastructure.TimesheetService;
 import tmc.attendance.infrastructure.XlsxTimesheetSink;
 import tmc.shared.Identity;
 import tmc.shared.EmployeeDirectory;
+import tmc.shared.StaffDirectory;
+import tmc.shared.WorkplaceSites;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.web.CorrelationIdFilter;
@@ -68,19 +73,22 @@ public class TimesheetController {
   @GetMapping("/attendance/v1/timesheets")
   public List<TimesheetRow> list(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-      @RequestParam String month, @RequestParam(required = false) String employeeId) {
+      @RequestParam String month, @RequestParam(required = false) String employeeId,
+      @RequestParam(required = false) String siteId) {
     var actor = authorize(auth, "attendance:read");
-    var visible = visible(actor);
-    if (employeeId != null) requireEmployee(visible, employeeId);
     var period = month(month);
-    audit(actor, "TIMESHEET_READ", period.toString());
-    return timesheets.month(period).stream().filter(row -> visible.contains(row.employeeId()))
-        .filter(row -> employeeId == null || employeeId.equals(row.employeeId())).toList();
+    var rows = rows(actor, period, employeeId, siteId);
+    audit(actor, "TIMESHEET_READ", reportTarget(period, siteId));
+    return rows;
   }
 
   @GetMapping("/attendance/v1/timesheets/employees")
-  public List<EmployeeOption> employees(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth) {
-    return visible(authorize(auth, "attendance:read")).stream().sorted()
+  public List<EmployeeOption> employees(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+      @RequestParam(required = false) String siteId) {
+    var actor = authorize(auth, "attendance:read");
+    validateSite(siteId);
+    return visible(actor).stream().sorted()
+        .filter(id -> siteId == null || employees.find(id).filter(employee -> matchesSite(siteId, employee.siteId())).isPresent())
         .map(id -> new EmployeeOption(id, employees.name(id))).toList();
   }
 
@@ -112,36 +120,70 @@ public class TimesheetController {
   }
 
   @GetMapping("/attendance/v1/timesheets/xlsx")
-  public ResponseEntity<FileSystemResource> xlsx(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-      @RequestParam String month) {
+  public ResponseEntity<Resource> xlsx(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+      @RequestParam String month, @RequestParam(required = false) String siteId,
+      @RequestParam(required = false) String employeeId) throws IOException {
     var actor = workbookActor(auth);
     var period = month(month);
+    String contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (workbookActor == null || siteId != null || employeeId != null) {
+      var report = new ByteArrayResource(xlsx.export(rows(actor, period, employeeId, siteId)));
+      audit(actor, "TIMESHEET_XLSX_DOWNLOAD", reportTarget(period, siteId));
+      return attachment(contentType, reportName(period, siteId, "xlsx")).body(report);
+    }
     var file = xlsx.file(period);
     if (!store.publication(period).map(item -> "SUCCESS".equals(item.status())).orElse(false)
         || !Files.isRegularFile(file)) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "Bảng tính đang chờ cập nhật.");
     }
     audit(actor, "TIMESHEET_XLSX_DOWNLOAD", period.toString());
-    return attachment("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file.getFileName().toString())
+    return attachment(contentType, file.getFileName().toString())
         .body(new FileSystemResource(file));
   }
 
   @GetMapping("/attendance/v1/timesheets/csv")
   public ResponseEntity<String> csv(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-      @RequestParam String month) {
+      @RequestParam String month, @RequestParam(required = false) String siteId,
+      @RequestParam(required = false) String employeeId) {
     var actor = authorize(auth, "attendance:export");
     var period = month(month);
-    var visible = visible(actor);
-    var csv = new StringBuilder("\uFEFFMã nhân viên,Họ tên,Ngày,Giờ vào,Giờ ra,Tổng giờ (HH:mm),Trạng thái\r\n");
-    for (var row : timesheets.month(period)) {
-      if (!visible.contains(row.employeeId())) continue;
+    var csv = new StringBuilder("\uFEFFMã nhân viên,Họ tên,Ngày,Giờ vào,Giờ ra,Tổng giờ (HH:mm),Trạng thái,Nhà máy\r\n");
+    for (var row : rows(actor, period, employeeId, siteId)) {
       csv.append(csvCell(row.employeeId())).append(',').append(csvCell(row.employeeName())).append(',')
           .append(row.workDate()).append(',').append(timestamp(row.firstIn())).append(',').append(timestamp(row.lastOut()))
           .append(',').append("%d:%02d".formatted(row.workedMinutes() / 60, row.workedMinutes() % 60))
-          .append(',').append(csvCell(row.status().label())).append("\r\n");
+          .append(',').append(csvCell(row.status().label())).append(',')
+          .append(csvCell(WorkplaceSites.name(row.siteId()))).append("\r\n");
     }
-    audit(actor, "TIMESHEET_CSV_DOWNLOAD", period.toString());
-    return attachment("text/csv;charset=UTF-8", "timesheet-" + period + ".csv").body(csv.toString());
+    audit(actor, "TIMESHEET_CSV_DOWNLOAD", reportTarget(period, siteId));
+    return attachment("text/csv;charset=UTF-8", reportName(period, siteId, "csv")).body(csv.toString());
+  }
+
+  private List<TimesheetRow> rows(String actor, YearMonth period, String employeeId, String siteId) {
+    validateSite(siteId);
+    var allowed = visible(actor);
+    if (employeeId != null) requireEmployee(allowed, employeeId);
+    return timesheets.month(period).stream().filter(row -> allowed.contains(row.employeeId()))
+        .filter(row -> employeeId == null || employeeId.equals(row.employeeId()))
+        .filter(row -> matchesSite(siteId, row.siteId())).toList();
+  }
+
+  private static void validateSite(String siteId) {
+    if (siteId != null && !"SITE-1".equals(siteId) && WorkplaceSites.ALL.stream().noneMatch(site -> site.id().equals(siteId))) {
+      throw new IllegalArgumentException("Chọn nhà máy hợp lệ.");
+    }
+  }
+
+  private static boolean matchesSite(String filter, String actual) {
+    return filter == null || StaffDirectory.siteFor(filter).equals(StaffDirectory.siteFor(actual));
+  }
+
+  private static String reportTarget(YearMonth period, String site) {
+    return period + (site == null ? "" : "/" + site);
+  }
+
+  private static String reportName(YearMonth period, String site, String extension) {
+    return "timesheet-" + period + (site == null ? "" : "-" + site) + "." + extension;
   }
 
   private String workbookActor(String header) {

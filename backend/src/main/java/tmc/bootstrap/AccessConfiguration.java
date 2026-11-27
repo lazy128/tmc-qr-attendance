@@ -59,6 +59,7 @@ import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.EmployeeDirectory;
 import tmc.shared.StaffDirectory;
+import tmc.shared.WorkplaceSites;
 import tmc.shared.StaffDirectory.Employee;
 import tmc.shared.StaffDirectory.Group;
 
@@ -177,15 +178,20 @@ public class AccessConfiguration {
       @Value("${tmc.edge.site:SITE-1}") String site,
       @Value("${tmc.workflow.demo:false}") boolean demo,
       @Value("${tmc.accounts.enabled:false}") boolean workplace) {
+    if (workplace) {
+      String primarySite = StaffDirectory.siteFor(site);
+      var registry = new JdbcStationRegistry(jdbc, primarySite, station,
+          WorkplaceSites.ALL.stream().map(WorkplaceSites.Site::id).toList());
+      for (var plant : WorkplaceSites.ALL) {
+        seedAttendanceGates(registry, plant.id(), plant.name(),
+            plant.id().equals(primarySite) ? station : plant.entryStation());
+      }
+      return registry;
+    }
     var registry = new JdbcStationRegistry(jdbc, site, station);
-    if (!demo && !workplace) return registry;
+    if (!demo) return registry;
     String location = "SITE-LA".equals(site) ? "Long An" : "Bình Dương";
-    var all = EnumSet.allOf(Group.class);
-    registry.seedGate(station, new Gate(location + " – Cổng vào 1", site, Gate.Type.ATTENDANCE_GATE,
-        all, Set.of(Direction.ENTRY), null, null));
-    registry.seedGate(station + "-OUT", new Gate(location + " – Cổng ra 1", site, Gate.Type.ATTENDANCE_GATE,
-        all, Set.of(Direction.EXIT), null, null));
-    if (workplace) return registry;
+    seedAttendanceGates(registry, site, location, station);
     registry.seedGate(station + "-PROD", new Gate(location + " – Khu sản xuất", site, Gate.Type.ZONE_GATE,
         Set.of(Group.STAFF, Group.MANAGER), Set.of(Direction.ENTRY), null, null));
     registry.seedGate(station + "-OFFICE", new Gate(location + " – Văn phòng quản lý", site, Gate.Type.ZONE_GATE,
@@ -193,6 +199,14 @@ public class AccessConfiguration {
     registry.seedGate(station + "-EXEC", new Gate(location + " – Khu lãnh đạo", site, Gate.Type.ZONE_GATE,
         Set.of(Group.EXECUTIVE), Set.of(Direction.ENTRY), null, null));
     return registry;
+  }
+
+  private void seedAttendanceGates(JdbcStationRegistry registry, String site, String location, String station) {
+    var all = EnumSet.allOf(Group.class);
+    registry.seedGate(station, new Gate(location + " – Cổng vào 1", site, Gate.Type.ATTENDANCE_GATE,
+        all, Set.of(Direction.ENTRY), null, null));
+    registry.seedGate(station + "-OUT", new Gate(location + " – Cổng ra 1", site, Gate.Type.ATTENDANCE_GATE,
+        all, Set.of(Direction.EXIT), null, null));
   }
 
   @Bean

@@ -15,6 +15,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.support.TransactionTemplate;
 import tmc.shared.EmployeeDirectory;
 import tmc.shared.Identity;
+import tmc.shared.StaffDirectory;
 import tmc.shared.StaffDirectory.Employee;
 import tmc.shared.StaffDirectory.Group;
 import tmc.shared.clock.ClockProvider;
@@ -23,13 +24,14 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
   public enum Role { EMPLOYEE, MANAGER, HR, GUARD, ADMIN }
 
   private static final String ACCOUNT_COLUMNS = """
-      SELECT a.*, e.full_name FROM workplace_account a
+      SELECT a.*, e.full_name, COALESCE(e.site_id, g.site_id) AS account_site FROM workplace_account a
       LEFT JOIN workplace_employee e ON e.employee_id = a.employee_id
+      LEFT JOIN station_registry g ON g.station_id = a.station_id
       """;
   private static final RowMapper<Account> ACCOUNT = (rs, i) -> new Account(rs.getString("username"),
       Optional.ofNullable(rs.getString("full_name")).orElse(rs.getString("username")),
       Role.valueOf(rs.getString("role")), rs.getString("employee_id"), rs.getString("station_id"),
-      rs.getBoolean("enabled"), rs.getBoolean("change_required"));
+      StaffDirectory.siteFor(rs.getString("account_site")), rs.getBoolean("enabled"), rs.getBoolean("change_required"));
   private static final String EMPLOYEES = """
       SELECT e.*, c.active FROM workplace_employee e JOIN credential c ON e.credential_id = c.credential_id
       """;
@@ -55,7 +57,7 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
     this.sessionLifetime = sessionLifetime;
   }
 
-  public Optional<Login> login(String rawUsername, String password) {
+  public Optional<Login> login(String rawUsername, String password, String deviceLabel) {
     if (rawUsername == null || !validPasswordLength(password, 1)) return Optional.empty();
     String username = rawUsername.toLowerCase(Locale.ROOT).strip();
     if (!username.matches("[a-z0-9][a-z0-9._-]{2,59}")) return Optional.empty();
@@ -83,6 +85,8 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       var expiry = now.plus(sessionLifetime).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
       var id = UUID.randomUUID().toString();
       jdbc.update("INSERT INTO workplace_session VALUES (?,?,?,?)", id, username, authentication.version(), utc(expiry));
+      jdbc.update("INSERT INTO workplace_login_history(session_id,username,signed_in_at,device_label) VALUES (?,?,?,?)",
+          id, username, utc(now), deviceLabel);
       return Optional.of(new Login(account(username).orElseThrow(), tokens.issue(username, id, now, expiry), sessionLifetime));
     });
   }
@@ -106,6 +110,34 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
   public void logout(String authorization) {
     tokens.verify(authorization, clock.now()).ifPresent(token -> jdbc.update(
         "DELETE FROM workplace_session WHERE session_id=? AND username=?", token.id(), token.username()));
+  }
+
+  public Optional<LoginActivity> loginActivity(String authorization) {
+    var now = clock.now();
+    return tokens.verify(authorization, now).map(token -> {
+      int others = jdbc.queryForObject("""
+          SELECT COUNT(*) FROM workplace_session WHERE username=? AND session_id<>? AND expires_at>?
+          """, Integer.class, token.username(), token.id(), utc(now));
+      var recent = jdbc.query("""
+          SELECT h.session_id, h.signed_in_at, h.device_label, s.session_id IS NOT NULL AS active
+          FROM workplace_login_history h LEFT JOIN workplace_session s ON s.session_id=h.session_id AND s.expires_at>?
+          WHERE h.username=? ORDER BY h.signed_in_at DESC,h.session_id DESC LIMIT 10
+          """, (row, index) -> new LoginEvent(row.getObject("signed_in_at", OffsetDateTime.class).toInstant(),
+          row.getString("device_label"), token.id().equals(row.getString("session_id")), row.getBoolean("active")),
+          utc(now), token.username());
+      return new LoginActivity(others, recent);
+    });
+  }
+
+  public Optional<Integer> closeOtherSessions(String authorization) {
+    return tokens.verify(authorization, clock.now()).flatMap(token -> tx.execute(status -> {
+      jdbc.queryForObject("SELECT username FROM workplace_account WHERE username=? FOR UPDATE", String.class, token.username());
+      if (session(authorization).filter(account -> !account.changeRequired()).isEmpty()) return Optional.empty();
+      int closed = jdbc.update("DELETE FROM workplace_session WHERE username=? AND session_id<>? AND expires_at>?",
+          token.username(), token.id(), utc(clock.now()));
+      if (closed > 0) rotateEmployeeCredential(token.username());
+      return Optional.of(closed);
+    }));
   }
 
   public boolean changePassword(String username, String current, String replacement) {
@@ -215,6 +247,10 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
           failed_attempts=0,locked_until=NULL WHERE username=?
         """, passwords.encode(password), requireChange, username);
     jdbc.update("DELETE FROM workplace_session WHERE username=?", username);
+    rotateEmployeeCredential(username);
+  }
+
+  private void rotateEmployeeCredential(String username) {
     jdbc.update("""
         UPDATE credential SET version=version+1 WHERE credential_id=(SELECT e.credential_id
           FROM workplace_employee e JOIN workplace_account a ON a.employee_id=e.employee_id WHERE a.username=?)
@@ -236,9 +272,11 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
     return value.strip();
   }
 
-  public record Account(String username, String displayName, Role role, String employeeId, String stationId,
+  public record Account(String username, String displayName, Role role, String employeeId, String stationId, String siteId,
       boolean enabled, boolean changeRequired) {}
   public record Login(Account account, String token, Duration lifetime) {}
+  public record LoginEvent(Instant signedInAt, String deviceLabel, boolean current, boolean active) {}
+  public record LoginActivity(int otherSessions, List<LoginEvent> recentLogins) {}
   public record NewAccount(String username, String password, Role role, String employeeId, String fullName,
       String siteId, String departmentId, Group accessGroup, String shiftId, String stationId) {}
   private record LoginRecord(String hash, boolean enabled, int failures, OffsetDateTime lockedUntil, int version) {}

@@ -9,6 +9,19 @@ export type AttendanceStatus = {
   lastExit: string | null;
 };
 export type Pass = AttendanceStatus & { token: string; expiresAt: string };
+export type EmployeeActivity = {
+  employeeId: string;
+  otherSessions: number;
+  recentLogins: { signedInAt: string; deviceLabel: string; current: boolean; active: boolean }[];
+  scans: {
+    eventId: string;
+    scannedAt: string;
+    siteId: string;
+    stationName: string;
+    direction: "ENTRY" | "EXIT";
+    suspicious: boolean;
+  }[];
+};
 export type Station = {
   siteId: string;
   stationId: string;
@@ -32,6 +45,7 @@ export type Account = {
   enabled: boolean;
   employeeId: string | null;
   stationId: string | null;
+  siteId: string | null;
   changeRequired: boolean;
 };
 export type Timesheet = {
@@ -62,6 +76,8 @@ export const accountApi = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<void>("/auth/v1/logout", { method: "POST" }),
+  closeOtherSessions: () =>
+    request<{ closed: number }>("/auth/v1/sessions/close-others", { method: "POST" }),
   password: (current: string, replacement: string) =>
     request<void>("/auth/v1/password", {
       method: "POST",
@@ -85,23 +101,21 @@ export const workflow = {
   pass: (signal: AbortSignal) => request<Pass>("/workplace/v1/me/qr", { method: "POST", signal }),
   attendance: (signal: AbortSignal) =>
     request<AttendanceStatus>("/workplace/v1/me/attendance", { signal }),
+  activity: (signal: AbortSignal) =>
+    request<EmployeeActivity>("/workplace/v1/me/activity", { signal }),
   station: (signal: AbortSignal) => request<Station>("/workplace/v1/station", { signal }),
   stations: (signal: AbortSignal) =>
-    request<{ stations: Station[]; canManage: boolean; siteId: string }>("/admin/v1/stations", {
-      signal,
-    }),
-  rows: (month: string, employeeId: string, signal: AbortSignal) =>
-    request<Timesheet[]>(
-      `${sheets}?${new URLSearchParams({ month, ...(employeeId ? { employeeId } : {}) })}`,
-      { signal },
+    request<{ stations: Station[]; canManage: boolean; siteId: string; siteIds: string[] }>(
+      "/admin/v1/stations",
+      {
+        signal,
+      },
     ),
-  roster: (signal: AbortSignal) =>
-    request<{ employeeId: string; employeeName: string }[]>(`${sheets}/employees`, {
-      signal,
-    }),
-  status: (month: string, signal: AbortSignal) =>
-    request<{ status: string; updatedAt: string | null }>(
-      `${sheets}/export-status?month=${encodeURIComponent(month)}`,
+  rows: (month: string, employeeId: string, signal: AbortSignal, siteId = "") =>
+    request<Timesheet[]>(`${sheets}?${timesheetQuery(month, siteId, employeeId)}`, { signal }),
+  roster: (signal: AbortSignal, siteId = "") =>
+    request<{ employeeId: string; employeeName: string }[]>(
+      `${sheets}/employees${siteId ? `?siteId=${encodeURIComponent(siteId)}` : ""}`,
       { signal },
     ),
   details: (employeeId: string, date: string) =>
@@ -111,9 +125,29 @@ export const workflow = {
       method: "POST",
       body: JSON.stringify({ employeeId, date, exitAt, reason }),
     }),
-  export: (month: string, type: "xlsx" | "csv") =>
-    download(`${sheets}/${type}?month=${encodeURIComponent(month)}`, {}),
+  export: (month: string, type: "xlsx" | "csv", siteId = "", employeeId = "") =>
+    download(`${sheets}/${type}?${timesheetQuery(month, siteId, employeeId)}`, {}),
 };
+
+function timesheetQuery(month: string, siteId: string, employeeId: string) {
+  return new URLSearchParams({
+    month,
+    ...(siteId ? { siteId } : {}),
+    ...(employeeId ? { employeeId } : {}),
+  });
+}
+
+export const workplaceSiteNames: Record<string, string> = {
+  "SITE-BD": "Bình Dương",
+  "SITE-LA": "Long An",
+};
+export function siteName(siteId: string) {
+  return workplaceSiteNames[siteId === "SITE-1" ? "SITE-BD" : siteId] ?? siteId;
+}
+
+export function canManageTimesheets(role: Role) {
+  return role === "ADMIN" || role === "HR";
+}
 
 export const roleLabel: Record<Role, string> = {
   EMPLOYEE: "Nhân viên",

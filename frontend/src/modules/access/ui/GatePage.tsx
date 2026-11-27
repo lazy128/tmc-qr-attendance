@@ -5,7 +5,7 @@ import { errorMessage } from "../../shared/lib/error-message";
 import { tokenFromQrLink } from "../../shared/lib/qr-link";
 import { AppPage } from "../../shared/ui/AppPage";
 import { RequireAccount } from "../../shared/ui/Auth";
-import { displayTime, workflow, type Station } from "../../shared/workflow";
+import { displayTime, siteName, workflow, type Station } from "../../shared/workflow";
 import { accessApi } from "../api/access-api";
 import { scanEventId } from "../lib/scan-event-id";
 import { parseScanToken } from "../lib/scan-token";
@@ -302,7 +302,7 @@ function StationScanner({
         <div className="workflow-gate-heading">
           <strong>{station.gate.name}</strong>
           <p>
-            {station.stationId} · {station.siteId}
+            {station.stationId} · {siteName(station.siteId)}
           </p>
         </div>
         {camera && (
