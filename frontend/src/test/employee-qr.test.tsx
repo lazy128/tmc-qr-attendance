@@ -40,6 +40,8 @@ const attendance = {
 beforeEach(() => {
   vi.stubEnv("VITE_QR_SCAN_ORIGIN", "");
   vi.spyOn(workflow, "employee").mockResolvedValue(staff);
+  vi.spyOn(workflow, "config").mockResolvedValue({ personalSelfEnabled: false });
+  vi.spyOn(workflow, "devices").mockResolvedValue({ canManage: true, devices: [] });
   vi.spyOn(workflow, "attendance").mockResolvedValue(attendance);
   vi.spyOn(workflow, "activity").mockResolvedValue({
     employeeId: staff.id,
@@ -56,12 +58,14 @@ it("displays the assigned branch and opens a separate QR link for the guard", as
   vi.spyOn(workflow, "pass").mockResolvedValue({
     ...attendance,
     token: "current",
-    expiresAt: new Date(Date.now() + 180_000).toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
   render(<EmployeePage />);
   await advance(0);
   await advance(0);
   expect(screen.getByText("Chi nhánh được phân công · Bình Dương")).toBeInTheDocument();
+  expect(workflow.pass).not.toHaveBeenCalled();
+  expect(screen.queryByText("Chấm công cá nhân tự quét")).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Mở QR cho bảo vệ quét" }));
   await advance(0);
@@ -81,6 +85,7 @@ async function advance(ms: number) {
 
 it("renders a prefixed QR, refreshes eight seconds before expiry and clears a revoked pass", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   const issue = vi
     .spyOn(workflow, "pass")
     .mockResolvedValueOnce({
@@ -111,6 +116,7 @@ it("renders a prefixed QR, refreshes eight seconds before expiry and clears a re
 
 it("hides the QR once it expires after a failed refresh", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   vi.spyOn(workflow, "pass")
     .mockResolvedValueOnce({
       ...attendance,
@@ -130,6 +136,7 @@ it("hides the QR once it expires after a failed refresh", async () => {
 
 it("renders a personal phone link and replaces the QR after confirmed attendance", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   vi.stubEnv("VITE_QR_SCAN_ORIGIN", "https://192.168.1.25:5173");
   const issue = vi.spyOn(workflow, "pass").mockResolvedValue({
     ...attendance,
@@ -162,6 +169,7 @@ it("renders a personal phone link and replaces the QR after confirmed attendance
 
 it("closes QR actions after an exit and opens a fresh entry QR on the next work date", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   const inShift = {
     ...attendance,
     status: "IN_SHIFT",
@@ -176,7 +184,7 @@ it("closes QR actions after an exit and opens a fresh entry QR on the next work 
   const issue = vi.spyOn(workflow, "pass").mockImplementation(async (_signal, direction) => ({
     ...(direction === "EXIT" ? inShift : nextDay),
     token: direction === "EXIT" ? "exit-qr" : "new-entry-qr",
-    expiresAt: new Date(Date.now() + 180_000).toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }));
   render(<EmployeePage />);
   await advance(0);
@@ -195,11 +203,12 @@ it("closes QR actions after an exit and opens a fresh entry QR on the next work 
   await advance(0);
   expect(issue).toHaveBeenLastCalledWith(expect.any(AbortSignal), "ENTRY");
   expect(screen.getByText("28/11/2026")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Mã QR của tôi" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Chấm công cá nhân tự quét" })).toBeInTheDocument();
 });
 
 it("hides a QR returned for a different account after a session changes", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   vi.spyOn(workflow, "pass").mockResolvedValue({
     ...attendance,
     employeeId: "NV002",
@@ -212,26 +221,27 @@ it("hides a QR returned for a different account after a session changes", async 
   expect(screen.queryByRole("img", { name: "Mã QR truy cập" })).not.toBeInTheDocument();
 });
 
-it("keeps the three-minute QR readable until expiry if refresh stalls and the laptop clock is behind", async () => {
+it("keeps the one-minute QR readable until expiry if refresh stalls and the laptop clock is behind", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   vi.stubEnv("VITE_QR_SCAN_ORIGIN", "http://192.168.1.25:5173");
   const issuedAt = Date.parse("2026-11-26T10:00:00Z") / 1000;
   vi.setSystemTime((issuedAt - 60) * 1000);
   const header = btoa(JSON.stringify({ kid: "demo" }));
-  const claims = btoa(JSON.stringify({ iat: issuedAt, exp: issuedAt + 180 }));
+  const claims = btoa(JSON.stringify({ iat: issuedAt, exp: issuedAt + 60 }));
   const issue = vi
     .spyOn(workflow, "pass")
     .mockResolvedValueOnce({
       ...attendance,
       token: `${header}.${claims}.signature`,
-      expiresAt: new Date((issuedAt + 180) * 1000).toISOString(),
+      expiresAt: new Date((issuedAt + 60) * 1000).toISOString(),
     })
     .mockImplementationOnce(() => new Promise(() => {}));
   render(<EmployeePage />);
   await advance(0);
   await advance(0);
-  expect(screen.getByText("2 phút 59 giây")).toBeInTheDocument();
-  await advance(175_000);
+  expect(screen.getByText("59 giây")).toBeInTheDocument();
+  await advance(55_000);
   expect(issue).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("img", { name: "Mã QR truy cập" })).toBeInTheDocument();
   await advance(1000);
@@ -264,14 +274,16 @@ it("uses a linked gate QR to record attendance in the employee session", async (
   expect(issue).not.toHaveBeenCalled();
 });
 
-it("automatically confirms a personal QR opened from the phone camera", async () => {
+it("submits a personal QR to HR only when the demo flag is enabled", async () => {
   vi.useFakeTimers();
+  vi.mocked(workflow.config).mockResolvedValue({ personalSelfEnabled: true });
   window.history.replaceState(null, "", "/employee#personal=employee-token");
   const personal = vi.spyOn(workflow, "personalCheckIn").mockResolvedValue({
     direction: "ENTRY",
     decision: "ALLOW",
-    reasonCode: "ALLOW",
-    command: "ACKED",
+    reasonCode: null,
+    command: "NOT_SENT",
+    evidence: "SELF_REPORTED",
     scannedAt: new Date().toISOString(),
   });
   render(<EmployeePage />);
@@ -279,6 +291,62 @@ it("automatically confirms a personal QR opened from the phone camera", async ()
   await advance(0);
   expect(window.location.hash).toBe("");
   expect(personal).toHaveBeenCalledExactlyOnceWith("employee-token", expect.any(AbortSignal));
-  expect(screen.getByText(/Đã ghi nhận giờ vào ·/)).toBeInTheDocument();
+  expect(screen.getByText("Đã gửi giờ vào để Nhân sự duyệt.")).toBeInTheDocument();
+  expect(screen.queryByText("Đã xác nhận chấm công")).not.toBeInTheDocument();
   expect(screen.queryByRole("img", { name: "Mã QR truy cập" })).not.toBeInTheDocument();
+});
+
+it("does not submit a personal QR when self-reporting is disabled", async () => {
+  vi.useFakeTimers();
+  window.history.replaceState(null, "", "/employee#personal=old-employee-token");
+  const personal = vi.spyOn(workflow, "personalCheckIn");
+  render(<EmployeePage />);
+  await advance(0);
+  expect(screen.getByRole("alert")).toHaveTextContent("Tự khai qua QR cá nhân hiện đang tắt.");
+  expect(personal).not.toHaveBeenCalled();
+});
+
+it("shows a pending previous gate command without confirming the attendance", async () => {
+  vi.useFakeTimers();
+  window.history.replaceState(null, "", "/employee#station=signed-station-code");
+  vi.spyOn(workflow, "checkIn").mockResolvedValue({
+    direction: "ENTRY",
+    decision: "DENY",
+    reasonCode: "COMMAND_PENDING",
+    command: "NOT_SENT",
+    scannedAt: new Date().toISOString(),
+  });
+  render(<EmployeePage />);
+  await advance(0);
+  fireEvent.click(screen.getByRole("button", { name: "Xác nhận chấm công" }));
+  await advance(0);
+  expect(screen.getByText("Lượt trước đang chờ xác nhận cổng.")).toBeInTheDocument();
+  expect(screen.queryByText("Đã xác nhận chấm công")).not.toBeInTheDocument();
+});
+
+it("checks a saved gate command by event ID after the station QR expires", async () => {
+  vi.useFakeTimers();
+  window.history.replaceState(null, "", "/employee#station=signed-station-code");
+  const attempt = {
+    eventId: "incident-1",
+    direction: "ENTRY",
+    decision: "ALLOW",
+    reasonCode: null,
+    command: "UNKNOWN",
+    scannedAt: new Date().toISOString(),
+  } as const;
+  const scan = vi.spyOn(workflow, "checkIn").mockResolvedValue(attempt);
+  const status = vi.spyOn(workflow, "checkInStatus").mockResolvedValue({
+    ...attempt,
+    command: "EXPIRED",
+  });
+  render(<EmployeePage />);
+  await advance(0);
+  fireEvent.click(screen.getByRole("button", { name: "Xác nhận chấm công" }));
+  await advance(0);
+  fireEvent.click(screen.getByRole("button", { name: "Kiểm tra lại" }));
+  await advance(0);
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(status).toHaveBeenCalledWith("incident-1", expect.any(AbortSignal));
+  expect(screen.getByText(/đã chuyển cho Nhân sự đối soát/i)).toBeInTheDocument();
 });

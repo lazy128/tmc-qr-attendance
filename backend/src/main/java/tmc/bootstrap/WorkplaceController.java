@@ -47,7 +47,7 @@ import tmc.userqr.application.IssueQrToken;
 @ConditionalOnProperty(name = "tmc.accounts.enabled", havingValue = "true")
 public class WorkplaceController {
   private static final String AUTH = HttpHeaders.AUTHORIZATION;
-  private static final String DEVICE_COOKIE = "tmc_device";
+  static final String DEVICE_COOKIE = "tmc_device";
   private static final Duration DEVICE_COOKIE_LIFETIME = Duration.ofDays(365);
   private final WorkplaceAccounts accounts;
   private final CredentialReader credentials;
@@ -60,12 +60,18 @@ public class WorkplaceController {
   private final ClockProvider clock;
   private final boolean secureCookie;
   private final boolean trustLoopbackProxy;
+  private final InetAddress trustedProxyIp;
+  private final boolean personalSelfEnabled;
+  private final int pairsPerDay;
 
   public WorkplaceController(WorkplaceAccounts accounts, CredentialReader credentials, IssueQrToken issue,
       JdbcStationRegistry stations, TimesheetService timesheets, JdbcAttendanceStore attendanceRecords,
       TimesheetCalculator calculator,
       AuditWriter audit, ClockProvider clock, @Value("${tmc.accounts.cookie-secure:true}") boolean secureCookie,
-      @Value("${tmc.accounts.trust-loopback-proxy:false}") boolean trustLoopbackProxy) {
+      @Value("${tmc.accounts.trust-loopback-proxy:false}") boolean trustLoopbackProxy,
+      @Value("${tmc.accounts.trusted-proxy-ip:}") String trustedProxyIp,
+      @Value("${tmc.checkin.personal-self.enabled:false}") boolean personalSelfEnabled,
+      @Value("${tmc.attendance.pairs-per-day:1}") int pairsPerDay) {
     this.accounts = accounts;
     this.credentials = credentials;
     this.issue = issue;
@@ -77,6 +83,12 @@ public class WorkplaceController {
     this.clock = clock;
     this.secureCookie = secureCookie;
     this.trustLoopbackProxy = trustLoopbackProxy;
+    this.trustedProxyIp = ipLiteral(trustedProxyIp);
+    if (!trustedProxyIp.isBlank() && this.trustedProxyIp == null) {
+      throw new IllegalArgumentException("TMC_TRUSTED_PROXY_IP must be an IP address");
+    }
+    this.personalSelfEnabled = personalSelfEnabled;
+    this.pairsPerDay = pairsPerDay;
   }
 
   @PostMapping("/auth/v1/login")
@@ -84,7 +96,8 @@ public class WorkplaceController {
       @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent,
       @CookieValue(value = DEVICE_COOKIE, required = false) String deviceCookie, HttpServletRequest request) {
     String deviceId = browserDeviceId(deviceCookie);
-    var login = accounts.login(body.username(), body.password(), describeDevice(userAgent), deviceId, connectionIp(request))
+    var login = accounts.login(body.username(), body.password(), describeDevice(userAgent), deviceId, connectionIp(request),
+        audit, CorrelationIdFilter.currentId())
         .orElseThrow(() -> new ResponseStatusException(
         HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ. Sau nhiều lần thử sai, hãy đợi một phút."));
     audit(login.account().username(), "SESSION_LOGIN", login.account().username());
@@ -157,11 +170,64 @@ public class WorkplaceController {
         login.currentDeviceName(), scans));
   }
 
+  @GetMapping("/workplace/v1/config")
+  public ResponseEntity<Config> config() {
+    return noStore().body(new Config(personalSelfEnabled));
+  }
+
+  @GetMapping("/workplace/v1/me/devices")
+  public ResponseEntity<DeviceList> myDevices(@RequestHeader(value = AUTH, required = false) String auth,
+      @CookieValue(value = DEVICE_COOKIE, required = false) String device) {
+    var actor = active(auth);
+    employee(actor);
+    return noStore().body(new DeviceList(accounts.trustedDevice(auth, device), accounts.devices(actor.username(), device)));
+  }
+
+  @PatchMapping("/workplace/v1/me/devices/{reference}")
+  public ResponseEntity<?> changeMyDevice(@RequestHeader(value = AUTH, required = false) String auth,
+      @CookieValue(value = DEVICE_COOKIE, required = false) String device,
+      @PathVariable String reference, @RequestBody DeviceTrust body) {
+    var actor = active(auth);
+    employee(actor);
+    return changeDevice(auth, device, actor.username(), reference, body.trusted());
+  }
+
+  @GetMapping("/workplace/v1/hr/employees/{employeeId}/devices")
+  public ResponseEntity<DeviceList> employeeDevices(@RequestHeader(value = AUTH, required = false) String auth,
+      @PathVariable String employeeId) {
+    return noStore().body(new DeviceList(true, accounts.devices(hrEmployeeUsername(auth, employeeId), null)));
+  }
+
+  @PatchMapping("/workplace/v1/hr/employees/{employeeId}/devices/{reference}")
+  public ResponseEntity<?> changeEmployeeDevice(@RequestHeader(value = AUTH, required = false) String auth,
+      @PathVariable String employeeId, @PathVariable String reference, @RequestBody DeviceTrust body) {
+    return changeDevice(auth, null, hrEmployeeUsername(auth, employeeId), reference, body.trusted());
+  }
+
+  private String hrEmployeeUsername(String auth, String employeeId) {
+    var actor = active(auth);
+    if (actor.role() != Role.HR && actor.role() != Role.ADMIN) throw forbidden();
+    return accounts.employeeUsername(employeeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+  }
+
+  private ResponseEntity<?> changeDevice(String auth, String device, String username, String reference, boolean trusted) {
+    return switch (accounts.changeTrust(auth, device, username, reference, trusted, audit, CorrelationIdFilter.currentId())) {
+      case OK -> ResponseEntity.noContent().build();
+      case FORBIDDEN -> ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ApiError("DEVICE_NOT_TRUSTED",
+          "Chỉ thiết bị tin cậy hoặc Nhân sự được duyệt thiết bị.", CorrelationIdFilter.currentId(), false));
+      case NOT_FOUND -> ResponseEntity.notFound().build();
+      case LIMIT -> ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("DEVICE_LIMIT",
+          "Đã có 3 thiết bị tin cậy. Hãy gỡ một thiết bị trước khi duyệt thêm.", CorrelationIdFilter.currentId(), false));
+    };
+  }
+
   @PostMapping("/workplace/v1/me/qr")
   public ResponseEntity<?> qr(@RequestHeader(value = AUTH, required = false) String auth,
       @RequestBody(required = false) QrRequest body) {
     var actor = active(auth);
     var employee = employee(actor);
+    var direction = body == null ? null : body.direction();
+    if (direction != null && !personalSelfEnabled) return ResponseEntity.notFound().build();
     var attendance = attendanceFor(employee.id(), clock.now());
     if ("LEFT".equals(attendance.status())) {
       return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("SHIFT_COMPLETED",
@@ -173,7 +239,8 @@ public class WorkplaceController {
       return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("REVOKED", "Thẻ đã thu hồi",
           CorrelationIdFilter.currentId(), false));
     }
-    var token = issue.issue(id, credential.deviceHash(), body == null ? null : body.direction());
+    var token = direction == null ? issue.issue(id, credential.deviceHash())
+        : issue.issuePersonal(id, credential.deviceHash(), direction);
     // A request racing with session revocation must not return a newly rotated credential.
     active(auth);
     audit(actor.username(), "QR_ISSUE", id);
@@ -249,16 +316,17 @@ public class WorkplaceController {
     return new ResponseStatusException(HttpStatus.FORBIDDEN, "Tài khoản không có quyền thực hiện thao tác này.");
   }
   private Attendance attendanceFor(String id, Instant now) {
-    var date = calculator.workDate(now);
+    var date = calculator.workDateFor(id, now);
     var day = timesheets.calculate(id, date);
     String status = day.map(data -> data.unpairedEntry() != null ? "IN_SHIFT"
-        : data.row().lastOut() != null ? "LEFT" : "NOT_ENTERED").orElse("NOT_ENTERED");
+        : data.completedPairs() >= pairsPerDay ? "LEFT"
+        : data.row().lastOut() != null ? "BETWEEN_PAIRS" : "NOT_ENTERED").orElse("NOT_ENTERED");
     return new Attendance(id, status, day.map(TimesheetCalculator.Calculation::lastEntry).orElse(null),
         day.map(data -> data.row().lastOut()).orElse(null), date);
   }
   private String connectionIp(HttpServletRequest request) {
     var peer = ipLiteral(request.getRemoteAddr());
-    if (trustLoopbackProxy && peer != null && peer.isLoopbackAddress()) {
+    if (peer != null && ((trustLoopbackProxy && peer.isLoopbackAddress()) || peer.equals(trustedProxyIp))) {
       var socketIp = ipLiteral(request.getHeader("X-TMC-Client-IP"));
       if (socketIp != null) return socketIp.getHostAddress();
     }
@@ -312,6 +380,9 @@ public class WorkplaceController {
 
   public record Login(String username, String password) {}
   public record DeviceName(String name) {}
+  public record Config(boolean personalSelfEnabled) {}
+  public record DeviceTrust(boolean trusted) {}
+  public record DeviceList(boolean canManage, List<WorkplaceAccounts.BrowserDevice> devices) {}
   public record QrRequest(Direction direction) {}
   public record Password(String current, String replacement) {}
   public record AccountUpdate(Boolean enabled, String password) {}

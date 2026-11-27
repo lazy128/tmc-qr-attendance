@@ -24,7 +24,7 @@ export function StationCodePanel({ station, close }: { station: Station; close: 
         setPayload("");
         setError(errorMessage(cause));
       } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(refresh, 14_000);
+        if (!controller.signal.aborted) timer = window.setTimeout(refresh, 5_000);
       }
     }
     void refresh();
@@ -58,7 +58,7 @@ export function StationCodePanel({ station, close }: { station: Station; close: 
         </label>
       )}
       <p className="workflow-qr-hint">
-        Nhân viên mở mục Quét QR tại cổng trên điện thoại và quét mã này để ghi giờ{" "}
+        Nhân viên mở mục Quét QR chấm công trên điện thoại và quét mã này để ghi giờ{" "}
         {direction === "ENTRY" ? "vào" : "ra"}.
       </p>
       {payload ? (

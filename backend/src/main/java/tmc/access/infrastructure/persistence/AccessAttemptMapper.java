@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import tmc.access.domain.AccessAttempt;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.AccessStates.Command;
 import tmc.access.domain.AccessStates.Decision;
 import tmc.access.domain.AccessStates.Evidence;
@@ -39,7 +40,7 @@ final class AccessAttemptMapper {
         Passage.valueOf(rs.getString("passage_state")),
         rs.getBoolean("offline_accepted"),
         evidence == null ? null : Evidence.valueOf(evidence),
-        rs.getBoolean("suspicious"), rs.getBoolean("attendance_gate")
+        rs.getBoolean("suspicious"), rs.getBoolean("attendance_gate"), Channel.valueOf(rs.getString("channel"))
     );
   }
 

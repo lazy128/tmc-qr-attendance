@@ -13,7 +13,8 @@ public final class AccessStates {
     SENT,
     ACKED,
     FAILED,
-    UNKNOWN
+    UNKNOWN,
+    EXPIRED
   }
 
   public enum Passage {
@@ -22,9 +23,20 @@ public final class AccessStates {
     CONFIRMED
   }
 
+  public enum Channel {
+    GATE_SCAN,
+    STATION_QR,
+    PERSONAL_SELF;
+
+    public static final String PERSONAL_AUDIENCE = "tmc-personal-checkin";
+  }
+
   public enum Evidence {
     ACK_ONLY,
-    PASSAGE_CONFIRMED
+    PASSAGE_CONFIRMED,
+    SELF_REPORTED,
+    MANUAL_PASSAGE,
+    MANUAL_NO_PASSAGE
   }
 
   public enum Reason {
@@ -37,6 +49,7 @@ public final class AccessStates {
     CVER_MISMATCH,
     DEVICE_MISMATCH,
     ANTI_PASSBACK,
+    COMMAND_PENDING,
     SHIFT_COMPLETED,
     STATION_SCOPE,
     ZONE_DENIED,

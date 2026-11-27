@@ -59,7 +59,7 @@ class EdgeFlowTest {
         "--tmc.timesheet.export-dir=" + timesheetExports,
         "--tmc.hr.schedule=-", "--TMC_HR_DEMO_TOKEN=hr-test-token", "--TMC_GUARD_DEMO_TOKEN=guard-test-token",
         "--TMC_EMPLOYEE_DEMO_TOKEN=employee-test-token", "--TMC_ADMIN_DEMO_TOKEN=admin-test-token",
-        "--TMC_EMPLOYEE_2_DEMO_TOKEN=employee-2-test-token",
+        "--TMC_EMPLOYEE_2_DEMO_TOKEN=employee-2-test-token", "--TMC_EDGE_SYNC_TOKEN=edge-sync-test-token",
         "--tmc.cors.origins=http://localhost:5173,http://192.168.20.5:5173"
     );
     base = "http://127.0.0.1:" + app.getWebServer().getPort();
@@ -273,8 +273,9 @@ class EdgeFlowTest {
         "SELECT payload FROM edge_outbox WHERE event_id=?", String.class, scan.get("eventId")
     );
     var batch = json.createArrayNode().add(json.readTree(payload));
-    var first = post("/edge/v1/sync", batch, null);
-    var retry = post("/edge/v1/sync", batch, null);
+    assertThat(post("/edge/v1/sync", batch, null).statusCode()).isEqualTo(401);
+    var first = post("/edge/v1/sync", batch, "edge-sync-test-token");
+    var retry = post("/edge/v1/sync", batch, "edge-sync-test-token");
     assertThat(first.statusCode()).isEqualTo(200);
     assertThat(retry.statusCode()).isEqualTo(200);
     assertThat(json.readTree(first.body()).get(0).path("status").asText()).isEqualTo("ACCEPTED");

@@ -1,21 +1,46 @@
 # Backend Edge
 
-Java 21, Spring Boot 3, Maven và H2. Profile mặc định `workplace` phục vụ đăng nhập, kiểm soát QR, chấm công và báo cáo.
+Java 21, Spring Boot 3 và Maven. Docker Compose chạy profile `workplace,postgres` cho đăng nhập, chấm công và báo cáo.
 
 ## Chạy Edge
 
-Trên Windows, chạy `.\scripts\start-workplace.ps1 -Initialize -AllowHttp` từ thư mục `backend`. Các lần sau bỏ `-Initialize`. Trên macOS/Linux, đặt `TMC_SESSION_KEY` là khóa bí mật ngẫu nhiên ít nhất 32 byte, mã hóa Base64, cùng `TMC_ADMIN_PASSWORD` cho lần đầu chạy `./mvnw spring-boot:run`. Giữ lại cùng khóa cho các lần khởi động sau.
+Sao chép `.env.example` thành `.env`, điền thông tin bên dưới rồi chạy `docker compose up -d --build`. Backend dùng `127.0.0.1:8085`. PostgreSQL dùng `127.0.0.1:55432` cho TablePlus và lưu dữ liệu trong volume `postgres-data`. Volume `workplace-exports` lưu bảng tính. `docker compose down` giữ cả hai volume.
 
-Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose up --build`. Backend được publish tại `127.0.0.1:8084` và ghi dữ liệu vào volume `workplace-data`. Volume `workplace-exports` lưu bảng tính. Đặt `EDGE_PORT` để đổi cổng publish. `docker compose down` giữ cả hai volume.
+Để chạy cấu hình H2 cũ trên Windows, dùng `.\scripts\start-workplace.ps1 -Initialize -AllowHttp` từ thư mục `backend`.
 
 | Tham số | Mục đích |
 | --- | --- |
 | `TMC_SESSION_KEY` | Khóa ký JWT đăng nhập. Không ghi khóa vào Git. |
 | `TMC_ADMIN_USERNAME`, `TMC_ADMIN_PASSWORD` | Khởi tạo quản trị viên đầu tiên. Mặc định username là `admin`; mật khẩu do người triển khai đặt. |
 | `TMC_SESSION_SECURE`, `TMC_CORS_ORIGINS` | Cookie mặc định Secure. Đặt origin chính xác và chỉ tắt Secure khi kiểm tra HTTP cục bộ. |
-| `TMC_DB_USERNAME`, `TMC_DB_PASSWORD` | Thông tin kết nối H2 dạng tệp. Mặc định `sa` với mật khẩu trống cho máy cá nhân. |
+| `TMC_TRUSTED_PROXY_IP` | IP proxy được phép chuyển địa chỉ máy khách cho lịch sử đăng nhập. Với Vite trên host và Compose publish loopback, lấy gateway bằng `docker network inspect tmc-attendance_default --format '{{(index .IPAM.Config 0).Gateway}}'`. |
+| `TMC_DB_NAME`, `TMC_DB_USERNAME`, `TMC_DB_PASSWORD`, `TMC_POSTGRES_PORT` | Tên DB, tài khoản, mật khẩu và cổng PostgreSQL trên host. Tên mặc định `tmc_attendance`, user `tmc`, cổng `55432`. |
 | `tmc.edge.site`, `tmc.edge.station` | Nhà máy mặc định là `SITE-BD`, với `BD-G01` và `BD-G01-OUT`. Long An có `LA-G01` và `LA-G01-OUT`. |
-| `tmc.qr.ttl-seconds`, `tmc.qr.keystore` | QR cá nhân có hiệu lực 180 giây với profile `workplace`. Có thể cấu hình PKCS#12 và mật khẩu qua `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 khi khởi động lại. QR đã phát trước khi đổi khóa cần được cấp mới. |
+| `tmc.qr.ttl-seconds` | JWT bảo vệ và kiosk đọc có hiệu lực 30 giây. |
+| `tmc.qr.personal-link-ttl-seconds`, `tmc.checkin.personal-self.enabled` | Link tự khai có hiệu lực 60 giây và tính năng tắt mặc định. Bật cho DB kiểm thử qua profile `workplace,personal-self-demo`. |
+| `tmc.attendance.pairs-per-day` | Số cặp vào/ra tối đa mỗi ngày công. Mặc định 1. |
+| `tmc.access.shift-grace-minutes`, `tmc.access.shift-late-grace-minutes` | Thời gian gia hạn của ca. Mặc định cho vào sớm 10 phút và ra muộn 30 phút. |
+| `tmc.qr.keystore` | Cấu hình PKCS#12 và mật khẩu `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 qua lần khởi động lại. |
+
+## Chuyển dữ liệu H2 sang PostgreSQL
+
+Dừng Edge đang kết nối vào H2. Giữ khóa phiên từ `data/workplace-session.key` trong `TMC_SESSION_KEY`. Chuẩn bị database PostgreSQL mới bằng `docker compose up -d --wait db`. Chạy lệnh dưới đây từ `backend/` sau khi đặt `TMC_DB_USERNAME` và `TMC_DB_PASSWORD` theo `.env`. Nếu H2 dùng thông tin khác mặc định, đặt thêm `TMC_H2_USERNAME` và `TMC_H2_PASSWORD`.
+
+~~~powershell
+.\mvnw.cmd dependency:copy-dependencies "-DincludeArtifactIds=h2,postgresql" "-DoutputDirectory=target/migration-drivers"
+$drivers = (Get-ChildItem target/migration-drivers/*.jar).FullName -join ';'
+$backup = 'data/tmc-workplace-before-postgres-' + (Get-Date -Format yyyyMMdd-HHmmss) + '.mv.db'
+java -cp $drivers scripts/CopyWorkplaceDatabase.java data/tmc-workplace.mv.db jdbc:postgresql://127.0.0.1:55432/tmc_attendance $backup src/main/resources/schema.sql
+docker compose up -d --build edge
+~~~
+
+Lệnh tạo bản sao H2, chép vào PostgreSQL trống và đối chiếu từng trường của các bảng đã có trong H2. Toàn bộ dữ liệu được ghi trong một giao dịch. Hãy dùng lại tài khoản ứng dụng đã chuyển. Trong TablePlus, tạo kết nối PostgreSQL theo các giá trị trong `.env`.
+
+## Đối soát lượt cổng
+
+Edge hỏi lại trạng thái của lệnh đang chờ. Mặc định sau 120 giây kể từ khi nhận lượt, lệnh chưa có kết quả chuyển sang `EXPIRED`. Edge ghi audit `GATE_COMMAND_EXPIRED`, ngừng hỏi trạng thái và cho phép nhân viên quét mã mới. Điều chỉnh thời hạn qua `tmc.turnstile.reconciliation-seconds`.
+
+Danh sách **Lượt cổng cần đối soát** nằm ở Trạm quét và Bảng công. Bảo vệ xem các lượt tại trạm được giao. Nhân sự hoặc quản trị viên xác minh đã qua cổng hay chưa rồi lưu lý do. Chỉ lượt được xác nhận qua cổng chấm công mới được đưa vào bảng công. Giờ công lấy từ lượt gốc. Lệnh mở cổng vẫn ghi `EXPIRED`, và xác nhận thủ công có evidence riêng. Đối soát lượt cũ giữ nguyên trạng thái hiện diện của lượt mới hơn.
 
 ## API bản nộp
 
@@ -24,9 +49,16 @@ Với Docker, khai báo cùng biến môi trường rồi chạy `docker compose
 | `POST /auth/v1/login` | Kiểm tra BCrypt trong DB, cấp JWT phiên qua cookie HttpOnly. |
 | `GET /auth/v1/me`, `POST /auth/v1/password`, `POST /auth/v1/logout` | Đọc danh tính, đổi mật khẩu và kết thúc phiên trong DB. |
 | `GET /workplace/v1/me/employee`, `POST /workplace/v1/me/qr`, `GET /workplace/v1/me/attendance` | Lấy hồ sơ, cấp QR và xem trạng thái công của chính nhân viên trong phiên. |
+| `GET /workplace/v1/config` | Trả cờ tự khai cho giao diện. |
+| `POST /workplace/v1/stations/{id}/qr/{direction}` | Bảo vệ của trạm hoặc quản trị viên phát mã cổng 15 giây. Lưu audit `STATION_QR_ISSUED`, tối đa 30 lần/phút/tài khoản. |
+| `POST /workplace/v1/me/check-in` | Xác thực thiết bị đã duyệt, chi nhánh và mã đã ký tại cổng. Lưu kênh `STATION_QR`. |
+| `POST /workplace/v1/me/check-in/personal` | Profile tự khai kiểm tra thiết bị và chủ mã rồi ghi `PERSONAL_SELF` với bằng chứng `SELF_REPORTED` để Nhân sự xem. |
+| `GET /workplace/v1/me/devices`, `PATCH /workplace/v1/me/devices/{reference}` | Xem thiết bị của tài khoản và duyệt hoặc gỡ qua trình duyệt tin cậy. Nhân sự và quản trị viên dùng `/workplace/v1/hr/employees/{employeeId}/devices`. |
 | `GET /workplace/v1/station` | Chỉ Bảo vệ, trả trạm đang hoạt động được gán. |
 | `POST /access/v1/verify` | Kiểm tra phiên Bảo vệ, trạm, JWT QR, quyền vào/ra và idempotency. `Idempotency-Key` trùng `eventId`. |
 | `GET /access/v1/scans/{id}` | Khôi phục kết quả theo mã lượt và trạm được gán. |
+| `GET /workplace/v1/me/check-in/status/{id}` | Nhân viên đọc kết quả lượt của mình từ trình duyệt tin cậy, kể cả khi QR đã hết hạn. |
+| `GET /gates/v1/incidents`, `POST /gates/v1/incidents/{id}/review` | Bảo vệ xem trạm được giao. Nhân sự và quản trị viên đối soát kèm lý do. |
 | `GET/POST /workplace/v1/accounts`, `PATCH /workplace/v1/accounts/{username}` | Chỉ Quản trị viên, quản lý tài khoản và trạng thái. |
 | `GET/POST /admin/v1/stations`, `PATCH /admin/v1/stations/{id}` | Quản lý registry trạm, hướng, nhóm và giờ hoạt động. |
 | `GET /attendance/v1/timesheets?month=YYYY-MM` | Tra bảng công trong phạm vi của phiên. |
@@ -51,7 +83,7 @@ Các hợp đồng cũ phía dưới dùng cho profile kiểm thử kiến trúc
 | `POST /gates/v1/presence-corrections` | Guard sửa quên quét ra bằng `lastEntryEventId` và `reason=MISSED_EXIT`. Hành động được audit và chỉ đổi presence. |
 | `GET /attendance/v1/records` | Trả dữ liệu trong scope của bearer token demo. |
 | `GET /reports/v1/exports?month=YYYY-MM` | Tải CSV tháng bằng bearer token HR. Chỉ bản ghi ACKED đủ điều kiện và không có cờ suspicious được đưa vào CSV. |
-| `POST /edge/v1/sync` | Nhận payload outbox tại Central mô phỏng. |
+| `POST /edge/v1/sync` | Central nhận outbox qua token `TMC_EDGE_SYNC_TOKEN`. Lưu event ID và site đầu tiên của mỗi `jti` trong DB để chống trùng qua lần khởi động lại. |
 
 ### Danh tính và cấu hình
 

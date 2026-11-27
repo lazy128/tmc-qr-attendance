@@ -83,7 +83,13 @@ async function readQr(page: Page, name: string) {
   return data;
 }
 
-test("scans a personal QR on a second device and updates both screens and payroll", async ({
+function stationHash(code: string) {
+  const hash = code.startsWith("tmc-station:") ? "#station=" + code.slice(12) : new URL(code).hash;
+  expect(hash).toMatch(/^#station=/);
+  return hash;
+}
+
+test("approves a phone and scans the station QR to update both screens and payroll", async ({
   browser,
 }) => {
   test.skip(!adminPassword, "Set E2E_ADMIN_PASSWORD for a workplace test database.");
@@ -158,8 +164,25 @@ test("scans a personal QR on a second device and updates both screens and payrol
     await expect(desktopLogin.getByText("IP 127.0.0.1", { exact: true })).toBeVisible();
     const currentLogin = phone.getByRole("listitem").filter({ hasText: "Phiên hiện tại" });
     await expect(currentLogin.getByText("IP 127.0.0.1", { exact: true })).toBeVisible();
+    await expect(phone.getByText(/duyệt trình duyệt này/)).toBeVisible();
+    const thisBrowser = phone.getByRole("listitem").filter({ hasText: "Trình duyệt này" });
+    await expect(thisBrowser).toContainText("Chưa tin cậy");
+    const code = (await thisBrowser.getByText(/Mã [A-F0-9]{8}/).innerText()).match(
+      /Mã ([A-F0-9]{8})/,
+    )?.[1];
+    expect(code).toBeTruthy();
+    await person.getByRole("button", { name: "Cập nhật thiết bị" }).click();
+    await person.getByRole("button", { name: `Duyệt thiết bị ${code}` }).click();
+    await expect(person.getByRole("button", { name: `Gỡ tin cậy ${code}` })).toBeVisible();
+
+    await adminPage.getByRole("button", { name: "Trạm quét", exact: true }).click();
+    await adminPage
+      .getByRole("row")
+      .filter({ has: adminPage.getByText("LA-G01", { exact: true }) })
+      .getByRole("button", { name: "Hiện mã tại cổng" })
+      .click();
     const requests: string[] = [];
-    await phone.route("**/workplace/v1/me/check-in/personal", async (route) => {
+    await phone.route("**/workplace/v1/me/check-in", async (route) => {
       requests.push(route.request().postData() ?? "");
       if (requests.length !== 1) {
         await route.continue();
@@ -169,12 +192,9 @@ test("scans a personal QR on a second device and updates both screens and payrol
       expect(response.status()).toBe(200);
       await route.abort("failed");
     });
-    const personal = await readQr(person, "Mã QR truy cập");
-    const personalHash = personal.startsWith("tmc1:")
-      ? "#personal=" + personal.slice(5)
-      : new URL(personal).hash;
-    expect(personalHash).toMatch(/^#personal=/);
-    await phone.goto(base + "/employee" + personalHash);
+    const entryQr = await readQr(adminPage, "Mã QR chấm công tại cổng");
+    await phone.goto(base + "/employee" + stationHash(entryQr));
+    await phone.getByRole("button", { name: "Xác nhận chấm công" }).click();
     await expect(phone.getByRole("alert")).toContainText("Chưa nhận được kết quả");
     await phone.getByRole("button", { name: "Kiểm tra lại" }).click();
     await expect(phone.getByText(/Đã ghi nhận giờ vào ·/)).toBeVisible();
@@ -184,10 +204,15 @@ test("scans a personal QR on a second device and updates both screens and payrol
     await expect(person.getByText("Đã xác nhận chấm công")).toBeVisible();
     await expect(person.getByRole("img", { name: "Mã QR truy cập" })).toHaveCount(0);
 
-    await person.getByRole("button", { name: "Mở QR giờ ra" }).click();
-    const exitQr = await readQr(person, "Mã QR truy cập");
-    const hash = exitQr.startsWith("tmc1:") ? "#personal=" + exitQr.slice(5) : new URL(exitQr).hash;
-    await phone.goto(base + "/employee" + hash);
+    await adminPage.getByRole("button", { name: "Đóng mã QR" }).click();
+    await adminPage
+      .getByRole("row")
+      .filter({ has: adminPage.getByText("LA-G01-OUT", { exact: true }) })
+      .getByRole("button", { name: "Hiện mã tại cổng" })
+      .click();
+    const exitQr = await readQr(adminPage, "Mã QR chấm công tại cổng");
+    await phone.goto(base + "/employee" + stationHash(exitQr));
+    await phone.getByRole("button", { name: "Xác nhận chấm công" }).click();
     await expect(phone.getByText(/Đã ghi nhận giờ ra ·/)).toBeVisible();
     await expect(person.getByRole("status")).toContainText("Đã ghi nhận giờ ra");
     await expect(person.getByText("Đã kết thúc ngày công.", { exact: true })).toBeVisible();

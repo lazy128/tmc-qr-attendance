@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Download, RefreshCw } from "lucide-react";
+import { GateIncidentQueue } from "../../access/ui/GateIncidentQueue";
 import { errorMessage } from "../../shared/lib/error-message";
 import { AppPage } from "../../shared/ui/AppPage";
+import { TrustedDevicesPanel } from "../../shared/ui/TrustedDevicesPanel";
 import { RequireAccount } from "../../shared/ui/Auth";
 import {
   businessZone,
@@ -62,8 +64,10 @@ function TechnicalRow({ row }: { row: Timesheet }) {
           {scans.map((scan) => (
             <li key={scan.eventId}>
               <strong>
-                {displayTime(scan.scannedAt)} · {scan.direction} · {scan.command} ·{" "}
-                {scan.evidence ?? "—"}
+                {displayTime(scan.scannedAt)} · {scan.direction === "ENTRY" ? "Vào" : "Ra"} ·{" "}
+                {scan.evidence === "SELF_REPORTED"
+                  ? "Tự khai · Chờ Nhân sự xem"
+                  : (scan.evidence ?? scan.command)}
               </strong>
               <code>{scan.eventId}</code>
             </li>
@@ -261,6 +265,8 @@ function Timesheet({ role, assignedSite }: { role: Role; assignedSite: string | 
           </div>
         </div>
       )}
+      {canExport && <GateIncidentQueue />}
+      {canExport && filter && <TrustedDevicesPanel key={filter} employeeId={filter} />}
       {error && (
         <p className="workflow-error" role="alert">
           {error}

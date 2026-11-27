@@ -14,7 +14,6 @@ import java.security.interfaces.ECPublicKey;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.LocalTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -34,7 +33,6 @@ import tmc.access.application.GateRules.ActiveEmployeeRule;
 import tmc.access.application.GateRules.SiteRule;
 import tmc.access.application.GateRules.ZoneGroupRule;
 import tmc.access.application.GateRules.ShiftWindowRule;
-import tmc.access.application.GateRules.Window;
 import tmc.access.domain.Direction;
 import tmc.access.domain.Gate;
 import tmc.access.application.VerificationPipeline;
@@ -56,7 +54,7 @@ import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
 import tmc.access.infrastructure.snapshot.MutableSnapshot;
 import tmc.access.infrastructure.turnstile.TimeoutGateCommandSender;
-import tmc.attendance.application.TimesheetCalculator;
+import tmc.shared.ShiftCalendar;
 import tmc.shared.clock.ClockProvider;
 import tmc.shared.EmployeeDirectory;
 import tmc.shared.StaffDirectory;
@@ -76,9 +74,10 @@ public class AccessConfiguration {
   }
 
   @Bean
-  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc, TimesheetCalculator calculator,
+  JdbcPresenceTracker presenceTracker(JdbcTemplate jdbc, ShiftCalendar calendar,
+      @Value("${tmc.attendance.pairs-per-day:1}") int pairsPerDay,
       @Value("${tmc.accounts.enabled:false}") boolean workplace) {
-    return workplace ? new JdbcPresenceTracker(jdbc, true, time -> calculator.start(calculator.workDate(time)))
+    return workplace ? new JdbcPresenceTracker(jdbc, true, calendar, pairsPerDay)
         : new JdbcPresenceTracker(jdbc);
   }
 
@@ -226,17 +225,11 @@ public class AccessConfiguration {
       @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
       @Value("${tmc.access.shift-grace-minutes:10}") long graceMinutes,
       @Value("${tmc.access.enforce-employee-shift:false}") boolean enforceShift,
-      @Value("${tmc.access.shift.standard-open:06:00}") String standardOpen,
-      @Value("${tmc.access.shift.standard-close:19:00}") String standardClose,
-      @Value("${tmc.access.shift.night-open:20:00}") String nightOpen,
-      @Value("${tmc.access.shift.night-close:06:00}") String nightClose,
+      ShiftCalendar calendar,
       @Value("${tmc.edge.passage-sensor:false}") boolean sensorConfigured,
       @Value("${tmc.clock.skew-seconds:5}") long skew,
       @Value("${tmc.edge.snapshot-max-age-seconds:900}") long snapshotAge
   ) {
-    var shifts = enforceShift ? Map.of(
-        "STANDARD", new Window(LocalTime.parse(standardOpen), LocalTime.parse(standardClose)),
-        "NIGHT", new Window(LocalTime.parse(nightOpen), LocalTime.parse(nightClose))) : Map.<String, Window>of();
     var steps = VerificationPipeline.create(
         stations,
         stations,
@@ -244,7 +237,7 @@ public class AccessConfiguration {
         credentials,
         snapshot,
         new CompositePolicyEvaluator(List.of(new ActiveEmployeeRule(), new SiteRule(), new ZoneGroupRule(),
-            new ShiftWindowRule(ZoneId.of(zone), Duration.ofMinutes(graceMinutes), shifts)), snapshot,
+            new ShiftWindowRule(ZoneId.of(zone), Duration.ofMinutes(graceMinutes), enforceShift ? calendar : null)), snapshot,
             id -> stations.find(id.value()).map(JdbcStationRegistry.Station::gate), clock),
         presence,
         jdbc,

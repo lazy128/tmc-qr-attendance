@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.application.PermissionPolicy;
 import tmc.access.application.ScopeResolver;
+import tmc.attendance.application.AttendanceCsv;
 import tmc.attendance.application.TimesheetCalculator;
 import tmc.attendance.domain.AttendanceRecord;
 import tmc.attendance.domain.TimesheetRow;
@@ -149,11 +150,11 @@ public class TimesheetController {
     var period = month(month);
     var csv = new StringBuilder("\uFEFFMã nhân viên,Họ tên,Ngày,Giờ vào,Giờ ra,Tổng giờ (HH:mm),Trạng thái,Nhà máy\r\n");
     for (var row : rows(actor, period, employeeId, siteId)) {
-      csv.append(csvCell(row.employeeId())).append(',').append(csvCell(row.employeeName())).append(',')
+      csv.append(AttendanceCsv.field(row.employeeId())).append(',').append(AttendanceCsv.field(row.employeeName())).append(',')
           .append(row.workDate()).append(',').append(timestamp(row.firstIn())).append(',').append(timestamp(row.lastOut()))
           .append(',').append("%d:%02d".formatted(row.workedMinutes() / 60, row.workedMinutes() % 60))
-          .append(',').append(csvCell(row.status().label())).append(',')
-          .append(csvCell(WorkplaceSites.name(row.siteId()))).append("\r\n");
+          .append(',').append(AttendanceCsv.field(row.status().label())).append(',')
+          .append(AttendanceCsv.field(WorkplaceSites.name(row.siteId()))).append("\r\n");
     }
     audit(actor, "TIMESHEET_CSV_DOWNLOAD", reportTarget(period, siteId));
     return attachment("text/csv;charset=UTF-8", reportName(period, siteId, "csv")).body(csv.toString());
@@ -221,11 +222,6 @@ public class TimesheetController {
 
   private String timestamp(Instant value) {
     return value == null ? "" : value.atZone(calculator.zone()).toOffsetDateTime().toString();
-  }
-
-  private static String csvCell(String value) {
-    if (!value.isEmpty() && "=+-@\t\r\n".indexOf(value.charAt(0)) >= 0) value = "'" + value;
-    return "\"" + value.replace("\"", "\"\"") + "\"";
   }
 
   private void audit(String actor, String action, String target) {

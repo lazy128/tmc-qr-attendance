@@ -10,21 +10,27 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import tmc.access.domain.port.Credential;
+import tmc.shared.DatabaseDialect;
 
 @Repository
 public class JdbcDeviceBindings {
   private final JdbcTemplate jdbc;
+  private final boolean postgres;
   private final SecureRandom random = new SecureRandom();
 
   public JdbcDeviceBindings(JdbcTemplate jdbc) {
     this.jdbc = jdbc;
+    this.postgres = DatabaseDialect.isPostgres(jdbc);
   }
 
   public String enroll(Credential credential) {
     byte[] bytes = new byte[32];
     random.nextBytes(bytes);
     String proof = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    jdbc.update("""
+    jdbc.update(postgres ? """
+        INSERT INTO device_binding (credential_id, device_hash, proof_hash) VALUES (?, ?, ?)
+        ON CONFLICT (credential_id) DO UPDATE SET device_hash=EXCLUDED.device_hash, proof_hash=EXCLUDED.proof_hash
+        """ : """
         MERGE INTO device_binding (credential_id, device_hash, proof_hash) KEY (credential_id)
         VALUES (?, ?, ?)
         """, credential.id(), credential.deviceHash(), hash(proof));

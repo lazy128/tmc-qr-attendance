@@ -13,7 +13,8 @@ public final class AttendanceCsv {
         "event_id,employee_id,site_id,direction,scanned_at,evidence,hr_review\r\n"
     );
     for (AttendanceRecord row : records) {
-      if (!row.eligible() || !"ACKED".equals(row.command()) || row.suspicious()) continue;
+      if (!row.eligible() || row.suspicious()
+          || (!"ACKED".equals(row.command()) && !"MANUAL_PASSAGE".equals(row.evidence()))) continue;
       if (!month.equals(YearMonth.from(row.scannedAt().atZone(zone)))) continue;
       csv.append(field(row.eventId())).append(',')
           .append(field(row.employeeId())).append(',')
@@ -26,7 +27,7 @@ public final class AttendanceCsv {
     return csv.toString();
   }
 
-  private static String field(String value) {
+  public static String field(String value) {
     if (value == null) return "";
     String trimmed = value.stripLeading();
     if (value.startsWith("\t") || value.startsWith("\r") || value.startsWith("\n")

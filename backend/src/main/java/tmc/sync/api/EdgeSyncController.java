@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tmc.access.domain.AccessAttempt;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.AccessStates.Command;
 import tmc.access.domain.AccessStates.Decision;
 import tmc.access.domain.AccessStates.Evidence;
@@ -47,10 +48,12 @@ public class EdgeSyncController {
   @PostMapping("/edge/v1/sync")
   public List<SyncResult> sync(@RequestBody List<EdgeSyncEvent> batch,
       @RequestHeader(value = "Authorization", required = false) String authorization) {
-    if (attendance.isPresent() && (authorization == null || !MessageDigest.isEqual(
-        ("Bearer " + syncToken).getBytes(StandardCharsets.UTF_8), authorization.getBytes(StandardCharsets.UTF_8)))) {
+    if (syncToken.isBlank()) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+    if (authorization == null || !MessageDigest.isEqual(
+        ("Bearer " + syncToken).getBytes(StandardCharsets.UTF_8), authorization.getBytes(StandardCharsets.UTF_8))) {
       throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
     }
+    if (batch.isEmpty() || batch.size() > 100) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
     return batch.stream().map(event -> {
       var attempt = new AccessAttempt(
           new EventId(event.eventId()),
@@ -70,7 +73,7 @@ public class EdgeSyncController {
           Passage.valueOf(event.passage()),
           event.offlineAccepted(),
           event.evidence() == null ? null : Evidence.valueOf(event.evidence()),
-          false, !Boolean.TRUE.equals(event.zoneGate())
+          false, !Boolean.TRUE.equals(event.zoneGate()), event.channel() == null ? Channel.GATE_SCAN : Channel.valueOf(event.channel())
       );
       var result = receiver.receive(attempt);
       attendance.ifPresent(consumer -> consumer.record(result.attempt()));

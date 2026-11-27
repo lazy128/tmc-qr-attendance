@@ -18,7 +18,8 @@ public final class RecordPassageEvidence {
       throw new IllegalArgumentException("Attempt does not belong to this station");
     }
     if (attempt.command() == tmc.access.domain.AccessStates.Command.NOT_SENT
-        || attempt.command() == tmc.access.domain.AccessStates.Command.FAILED) {
+        || attempt.command() == tmc.access.domain.AccessStates.Command.FAILED
+        || attempt.command() == tmc.access.domain.AccessStates.Command.EXPIRED) {
       throw new IllegalStateException("Passage evidence cannot be linked to this attempt");
     }
     var confirmed = attempt.withPassage();

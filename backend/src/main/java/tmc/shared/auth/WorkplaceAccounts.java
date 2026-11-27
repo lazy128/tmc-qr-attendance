@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,6 +20,7 @@ import tmc.shared.StaffDirectory;
 import tmc.shared.StaffDirectory.Employee;
 import tmc.shared.StaffDirectory.Group;
 import tmc.shared.clock.ClockProvider;
+import tmc.shared.audit.AuditWriter;
 
 public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
   public enum Role { EMPLOYEE, MANAGER, HR, GUARD, ADMIN }
@@ -57,7 +59,8 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
     this.sessionLifetime = sessionLifetime;
   }
 
-  public Optional<Login> login(String rawUsername, String password, String deviceLabel, String deviceId, String clientIp) {
+  public Optional<Login> login(String rawUsername, String password, String deviceLabel, String deviceId, String clientIp,
+      AuditWriter audit, String correlation) {
     if (rawUsername == null || !validPasswordLength(password, 1)) return Optional.empty();
     String username = rawUsername.toLowerCase(Locale.ROOT).strip();
     if (!username.matches("[a-z0-9][a-z0-9._-]{2,59}")) return Optional.empty();
@@ -65,7 +68,8 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       var authentication = jdbc.query("SELECT * FROM workplace_account WHERE username=? FOR UPDATE", rs -> {
         if (!rs.next()) return null;
         return new LoginRecord(rs.getString("password_hash"), rs.getBoolean("enabled"), rs.getInt("failed_attempts"),
-            rs.getObject("locked_until", OffsetDateTime.class), rs.getInt("security_version"));
+            rs.getObject("locked_until", OffsetDateTime.class), rs.getInt("security_version"),
+            rs.getBoolean("device_trust_initialized"));
       }, username);
       var now = clock.now();
       if (authentication == null || !authentication.enabled()) {
@@ -86,6 +90,11 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       var id = UUID.randomUUID().toString();
       jdbc.update("INSERT INTO workplace_session VALUES (?,?,?,?)", id, username, authentication.version(), utc(expiry));
       rememberDevice(username, deviceId);
+      if (!authentication.trustInitialized() && account(username).orElseThrow().employeeId() != null) {
+        jdbc.update("UPDATE workplace_account SET device_trust_initialized=TRUE WHERE username=?", username);
+        jdbc.update("UPDATE workplace_browser_device SET trusted=TRUE WHERE username=? AND device_id=?", username, deviceId);
+        audit.append(username, "DEVICE_TRUST_GRANTED", username + "/" + deviceCode(deviceId), "SUCCESS", correlation, now);
+      }
       jdbc.update("""
           INSERT INTO workplace_login_history(session_id,username,signed_in_at,device_label,device_id,client_ip)
           VALUES (?,?,?,?,?,?)
@@ -151,7 +160,8 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       if (session(authorization).filter(account -> !account.changeRequired()).isEmpty()) return Optional.empty();
       String boundId = jdbc.query("SELECT device_id FROM workplace_login_history WHERE session_id=? AND username=?",
           row -> row.next() ? row.getString(1) : null, token.id(), token.username());
-      String deviceId = boundId == null ? candidateId : boundId;
+      if (boundId != null && !boundId.equals(candidateId)) return Optional.empty();
+      String deviceId = candidateId;
       rememberDevice(token.username(), deviceId);
       jdbc.update("UPDATE workplace_browser_device SET display_name=? WHERE username=? AND device_id=?",
           label, token.username(), deviceId);
@@ -166,6 +176,77 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
       return Optional.of(deviceId);
     }));
   }
+
+  public boolean trustedDevice(String authorization, String deviceId) {
+    if (deviceId == null || deviceId.length() != 36) return false;
+    var now = clock.now();
+    return tokens.verify(authorization, now).map(token -> Boolean.TRUE.equals(jdbc.queryForObject("""
+        SELECT EXISTS (
+          SELECT 1 FROM workplace_session s
+          JOIN workplace_account a ON a.username=s.username AND a.security_version=s.security_version
+          JOIN workplace_login_history h ON h.session_id=s.session_id AND h.username=a.username
+          JOIN workplace_browser_device d ON d.username=a.username AND d.device_id=h.device_id
+          WHERE s.session_id=? AND a.username=? AND s.expires_at>? AND a.enabled=TRUE
+            AND a.change_required=FALSE AND d.device_id=? AND d.trusted=TRUE)
+        """, Boolean.class, token.id(), token.username(), utc(now), deviceId))).orElse(false);
+  }
+
+  public Optional<String> employeeUsername(String employeeId) {
+    return jdbc.query("SELECT username FROM workplace_account WHERE employee_id=?",
+        row -> row.next() ? Optional.of(row.getString(1)) : Optional.empty(), employeeId);
+  }
+
+  public List<BrowserDevice> devices(String username, String currentDeviceId) {
+    return jdbc.query("""
+        SELECT d.device_id, d.display_name, d.trusted,
+          (SELECT h.device_label FROM workplace_login_history h
+           WHERE h.username=d.username AND h.device_id=d.device_id
+           ORDER BY h.signed_in_at DESC LIMIT 1) AS label,
+          (SELECT MAX(h.signed_in_at) FROM workplace_login_history h
+           WHERE h.username=d.username AND h.device_id=d.device_id) AS last_login
+        FROM workplace_browser_device d WHERE d.username=?
+        ORDER BY d.trusted DESC, last_login DESC, d.device_id
+        """, (row, index) -> {
+      String id = row.getString("device_id");
+      return new BrowserDevice(deviceReference(id), deviceCode(id), row.getString("display_name"),
+          row.getString("label"), Optional.ofNullable(row.getObject("last_login", OffsetDateTime.class)).map(OffsetDateTime::toInstant).orElse(null),
+          row.getBoolean("trusted"), Objects.equals(id, currentDeviceId));
+    }, username);
+  }
+
+  public TrustChange changeTrust(String authorization, String deviceCookie, String username, String reference,
+      boolean trusted, AuditWriter audit, String correlation) {
+    return tx.execute(status -> {
+      jdbc.queryForObject("SELECT username FROM workplace_account WHERE username=? FOR UPDATE", String.class, username);
+      var actor = session(authorization).filter(account -> !account.changeRequired()).orElse(null);
+      if (actor == null || (actor.role() != Role.HR && actor.role() != Role.ADMIN
+          && (!username.equals(actor.username()) || !trustedDevice(authorization, deviceCookie)))) {
+        return TrustChange.FORBIDDEN;
+      }
+      var devices = jdbc.query("SELECT device_id, trusted FROM workplace_browser_device WHERE username=?",
+          (row, index) -> new StoredDevice(row.getString(1), row.getBoolean(2)), username);
+      var device = devices.stream().filter(candidate -> deviceReference(candidate.id()).equals(reference))
+          .findFirst().orElse(null);
+      if (device == null) return TrustChange.NOT_FOUND;
+      if (device.trusted() == trusted) return TrustChange.OK;
+      if (trusted && devices.stream().filter(StoredDevice::trusted).count() >= 3) return TrustChange.LIMIT;
+      jdbc.update("UPDATE workplace_browser_device SET trusted=? WHERE username=? AND device_id=?", trusted, username, device.id());
+      jdbc.update("UPDATE workplace_account SET device_trust_initialized=TRUE WHERE username=?", username);
+      audit.append(actor.username(), trusted ? "DEVICE_TRUST_GRANTED" : "DEVICE_TRUST_REVOKED",
+          username + "/" + deviceCode(device.id()), "SUCCESS", correlation, clock.now());
+      return TrustChange.OK;
+    });
+  }
+
+  private static String deviceReference(String id) {
+    return UUID.nameUUIDFromBytes(("tmc-browser:" + id).getBytes(StandardCharsets.UTF_8)).toString();
+  }
+
+  public enum TrustChange { OK, FORBIDDEN, NOT_FOUND, LIMIT }
+
+  public record BrowserDevice(String reference, String code, String name, String label, Instant lastLogin,
+      boolean trusted, boolean current) {}
+  private record StoredDevice(String id, boolean trusted) {}
 
   private void rememberDevice(String username, String deviceId) {
     jdbc.update("""
@@ -329,5 +410,5 @@ public final class WorkplaceAccounts implements Identity, EmployeeDirectory {
   public record LoginActivity(int otherSessions, List<LoginEvent> recentLogins, String currentDeviceName) {}
   public record NewAccount(String username, String password, Role role, String employeeId, String fullName,
       String siteId, String departmentId, Group accessGroup, String shiftId, String stationId) {}
-  private record LoginRecord(String hash, boolean enabled, int failures, OffsetDateTime lockedUntil, int version) {}
+  private record LoginRecord(String hash, boolean enabled, int failures, OffsetDateTime lockedUntil, int version, boolean trustInitialized) {}
 }

@@ -10,22 +10,25 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tmc.attendance.application.AttendanceRecordStore;
 import tmc.attendance.domain.AttendanceRecord;
+import tmc.shared.DatabaseDialect;
 
 public final class JdbcAttendanceStore implements AttendanceRecordStore {
   private final JdbcTemplate jdbc;
+  private final boolean postgres;
 
   public JdbcAttendanceStore(JdbcTemplate jdbc) {
     this.jdbc = jdbc;
+    this.postgres = DatabaseDialect.isPostgres(jdbc);
   }
 
   @Override
   public boolean insertIfAbsent(AttendanceRecord record) {
     try {
-      return jdbc.update(
+      if (jdbc.update(
           "INSERT INTO attendance_record("
               + "event_id, employee_id, site_id, station_id, direction, scanned_at, "
               + "command_state, passage_state, evidence, eligible, hr_review, suspicious"
-              + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+              + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)" + (postgres ? " ON CONFLICT (event_id) DO NOTHING" : ""),
           record.eventId(),
           record.employeeId(),
           record.siteId(),
@@ -38,19 +41,21 @@ public final class JdbcAttendanceStore implements AttendanceRecordStore {
           record.eligible(),
           record.hrReview(),
           record.suspicious()
-      ) == 1;
+      ) == 1) return true;
     } catch (DuplicateKeyException duplicate) {
-      if (record.suspicious()) {
-        jdbc.update("UPDATE attendance_record SET suspicious=TRUE WHERE event_id=?", record.eventId());
-      }
-      if ("CONFIRMED".equals(record.passage())) {
-        jdbc.update("""
-            UPDATE attendance_record SET passage_state=?, evidence=?, hr_review=?
-            WHERE event_id=? AND passage_state <> 'CONFIRMED'
-            """, record.passage(), record.evidence(), record.hrReview(), record.eventId());
-      }
-      return false;
+      // H2 reports duplicates as exceptions. PostgreSQL handles them via ON CONFLICT.
+      if (postgres) throw duplicate;
     }
+    if (record.suspicious()) {
+      jdbc.update("UPDATE attendance_record SET suspicious=TRUE WHERE event_id=?", record.eventId());
+    }
+    if ("CONFIRMED".equals(record.passage())) {
+      jdbc.update("""
+          UPDATE attendance_record SET passage_state=?, evidence=?, hr_review=?
+          WHERE event_id=? AND passage_state <> 'CONFIRMED'
+          """, record.passage(), record.evidence(), record.hrReview(), record.eventId());
+    }
+    return false;
   }
 
   @Override

@@ -3,6 +3,7 @@ package tmc.userqr.application;
 import java.time.Duration;
 import java.util.Objects;
 import tmc.access.domain.Direction;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.port.Claims;
 import tmc.access.domain.port.Credential;
 import tmc.access.domain.port.CredentialReader;
@@ -16,6 +17,7 @@ public final class IssueQrToken {
   private final ClockProvider clock;
   private final IdGenerator ids;
   private final Duration ttl;
+  private final Duration personalTtl;
   private final String issuer;
   private final String audience;
   private final String keyId;
@@ -26,6 +28,7 @@ public final class IssueQrToken {
       ClockProvider clock,
       IdGenerator ids,
       Duration ttl,
+      Duration personalTtl,
       String issuer,
       String audience,
       String keyId
@@ -35,16 +38,22 @@ public final class IssueQrToken {
     this.clock = clock;
     this.ids = ids;
     this.ttl = ttl;
+    this.personalTtl = personalTtl;
     this.issuer = issuer;
     this.audience = audience;
     this.keyId = keyId;
   }
 
   public IssuedToken issue(String credentialId, String deviceHash) {
-    return issue(credentialId, deviceHash, null);
+    return issue(credentialId, deviceHash, null, audience, ttl);
   }
 
-  public IssuedToken issue(String credentialId, String deviceHash, Direction attendanceDirection) {
+  public IssuedToken issuePersonal(String credentialId, String deviceHash, Direction direction) {
+    return issue(credentialId, deviceHash, Objects.requireNonNull(direction), Channel.PERSONAL_AUDIENCE, personalTtl);
+  }
+
+  private IssuedToken issue(String credentialId, String deviceHash, Direction attendanceDirection,
+      String audience, Duration ttl) {
     Credential credential = reader.getCredential(credentialId)
         .orElseThrow(() -> new IllegalArgumentException("credential not found"));
     if (!credential.active()) {

@@ -6,11 +6,13 @@ import tmc.attendance.domain.EligibilityPolicy;
 public final class DefaultEligibilityPolicy implements EligibilityPolicy {
   @Override
   public boolean eligible(AttendanceEvent event) {
-    return "ACKED".equals(event.command());
+    return "MANUAL_PASSAGE".equals(event.evidence())
+        || ("ACKED".equals(event.command()) && !"SELF_REPORTED".equals(event.evidence()));
   }
 
   @Override
   public boolean requiresHrReview(AttendanceEvent event) {
-    return "ACKED".equals(event.command()) && "ACK_ONLY".equals(event.evidence());
+    return "SELF_REPORTED".equals(event.evidence())
+        || ("ACKED".equals(event.command()) && "ACK_ONLY".equals(event.evidence()));
   }
 }

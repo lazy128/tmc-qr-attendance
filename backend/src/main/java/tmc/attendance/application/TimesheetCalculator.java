@@ -14,17 +14,25 @@ import tmc.attendance.domain.TimesheetRow;
 import tmc.attendance.domain.TimesheetRow.Status;
 import tmc.shared.StaffDirectory;
 import tmc.shared.EmployeeDirectory;
+import tmc.shared.ShiftCalendar;
 
-public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDirectory employees) {
+public record TimesheetCalculator(ShiftCalendar calendar, EmployeeDirectory employees) {
+  public TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDirectory employees) {
+    this(new ShiftCalendar(zone, dayStarts, employees, java.util.Map.of(), Duration.ZERO, Duration.ZERO), employees);
+  }
+  public ZoneId zone() { return calendar.zone(); }
   public TimesheetCalculator(ZoneId zone, LocalTime dayStarts) { this(zone, dayStarts, StaffDirectory::find); }
   public LocalDate workDate(Instant timestamp) {
-    var local = timestamp.atZone(zone);
-    return local.toLocalTime().isBefore(dayStarts) ? local.toLocalDate().minusDays(1) : local.toLocalDate();
+    return calendar.fallbackDate(timestamp);
   }
 
-  public Instant start(LocalDate date) { return date.atTime(dayStarts).atZone(zone).toInstant(); }
+  public Instant start(LocalDate date) { return calendar.dayStart(date); }
 
-  public record Calculation(TimesheetRow row, Instant unpairedEntry, Instant lastEntry) {}
+  public LocalDate workDateFor(String employeeId, Instant timestamp) {
+    return calendar.workDateFor(employeeId, timestamp);
+  }
+
+  public record Calculation(TimesheetRow row, Instant unpairedEntry, Instant lastEntry, int completedPairs) {}
 
   public Optional<Calculation> calculate(String employeeId, LocalDate date, List<AttendanceRecord> scans,
       Instant manualExit) {
@@ -43,6 +51,7 @@ public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDire
     Instant open = null;
     Instant lastEntry = null;
     Duration worked = Duration.ZERO;
+    int completedPairs = 0;
     boolean duplicate = false;
     boolean review = false;
     boolean unresolved = false;
@@ -61,6 +70,7 @@ public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDire
       } else if ("EXIT".equals(scan.direction()) && open != null && !scan.scannedAt().isBefore(open)) {
         lastOut = scan.scannedAt();
         worked = worked.plus(Duration.between(open, lastOut));
+        completedPairs++;
         open = null;
       } else {
         unresolved = true;
@@ -69,6 +79,6 @@ public record TimesheetCalculator(ZoneId zone, LocalTime dayStarts, EmployeeDire
     Status status = open != null ? Status.MISSING_EXIT : duplicate ? Status.DUPLICATE
         : unresolved || firstIn == null ? Status.REVIEW : Status.COMPLETE;
     return Optional.of(new Calculation(new TimesheetRow(employeeId, employees.name(employeeId), date, site,
-        firstIn, lastOut, worked.toMinutes(), status, review || status != Status.COMPLETE), open, lastEntry));
+        firstIn, lastOut, worked.toMinutes(), status, review || status != Status.COMPLETE), open, lastEntry, completedPairs));
   }
 }

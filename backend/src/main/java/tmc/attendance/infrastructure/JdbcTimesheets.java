@@ -11,23 +11,45 @@ import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tmc.attendance.domain.TimesheetRow;
+import tmc.shared.DatabaseDialect;
 import tmc.shared.StaffDirectory;
 
 public final class JdbcTimesheets {
   public record Publication(String period, long revision, String status, Instant updatedAt) {}
   private final JdbcTemplate jdbc;
 
-  public JdbcTimesheets(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+  private final boolean postgres;
+
+  public JdbcTimesheets(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
+    this.postgres = DatabaseDialect.isPostgres(jdbc);
+  }
 
   public void lock(String employeeId, LocalDate date) {
-    jdbc.update("MERGE INTO timesheet_day_lock KEY(employee_id,work_date) VALUES(?,?)", employeeId, date);
+    if (postgres) {
+      jdbc.update("""
+          INSERT INTO timesheet_day_lock(employee_id,work_date) VALUES(?,?)
+          ON CONFLICT (employee_id,work_date) DO NOTHING
+          """, employeeId, date);
+      jdbc.queryForObject("""
+          SELECT 1 FROM timesheet_day_lock WHERE employee_id=? AND work_date=? FOR UPDATE
+          """, Integer.class, employeeId, date);
+    } else {
+      jdbc.update("MERGE INTO timesheet_day_lock KEY(employee_id,work_date) VALUES(?,?)", employeeId, date);
+    }
   }
 
   public boolean saveIfChanged(TimesheetRow row) {
     var saved = jdbc.query("SELECT s.*, e.full_name FROM daily_timesheet s LEFT JOIN workplace_employee e USING (employee_id) WHERE s.employee_id=? AND s.work_date=?",
         rs -> rs.next() ? readRow(rs) : null, row.employeeId(), row.workDate());
     if (row.equals(saved)) return false;
-    jdbc.update("""
+    jdbc.update(postgres ? """
+        INSERT INTO daily_timesheet(employee_id,work_date,site_id,first_in,last_out,worked_minutes,status,review_flag,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT (employee_id,work_date) DO UPDATE SET site_id=EXCLUDED.site_id, first_in=EXCLUDED.first_in,
+          last_out=EXCLUDED.last_out, worked_minutes=EXCLUDED.worked_minutes, status=EXCLUDED.status,
+          review_flag=EXCLUDED.review_flag, updated_at=EXCLUDED.updated_at
+        """ : """
         MERGE INTO daily_timesheet(employee_id,work_date,site_id,first_in,last_out,worked_minutes,status,review_flag,updated_at)
         KEY(employee_id,work_date) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """, row.employeeId(), row.workDate(), row.siteId(), offset(row.firstIn()), offset(row.lastOut()),
@@ -53,7 +75,10 @@ public final class JdbcTimesheets {
   }
 
   public void markPending(YearMonth month) {
-    jdbc.update("""
+    jdbc.update(postgres ? """
+        INSERT INTO timesheet_publication(period,revision,status) VALUES(?,1,'PENDING')
+        ON CONFLICT (period) DO UPDATE SET revision=timesheet_publication.revision+1,status='PENDING',next_attempt=NULL
+        """ : """
         MERGE INTO timesheet_publication p USING (VALUES (CAST(? AS VARCHAR(7)))) v(period)
         ON p.period=v.period
         WHEN MATCHED THEN UPDATE SET revision=p.revision+1,status='PENDING',next_attempt=NULL

@@ -1,22 +1,51 @@
+name: tmc-attendance
+
 services:
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "127.0.0.1:${TMC_POSTGRES_PORT:-55432}:5432"
+    environment:
+      POSTGRES_DB: "${TMC_DB_NAME:-tmc_attendance}"
+      POSTGRES_USER: "${TMC_DB_USERNAME:-tmc}"
+      POSTGRES_PASSWORD: "${TMC_DB_PASSWORD:?Cần mật khẩu PostgreSQL}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   edge:
     build: .
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:${EDGE_PORT:-8084}:8080"
+      - "127.0.0.1:${EDGE_PORT:-8085}:8080"
     environment:
       SERVER_ADDRESS: 0.0.0.0
       TMC_SESSION_KEY: "${TMC_SESSION_KEY:?Cần khóa phiên Base64}"
       TMC_SESSION_SECURE: "${TMC_SESSION_SECURE:-true}"
       TMC_ADMIN_USERNAME: "${TMC_ADMIN_USERNAME:-admin}"
       TMC_ADMIN_PASSWORD: "${TMC_ADMIN_PASSWORD:-}"
-      TMC_DB_USERNAME: "${TMC_DB_USERNAME:-sa}"
-      TMC_DB_PASSWORD: "${TMC_DB_PASSWORD:-}"
+      TMC_DB_HOST: db
+      TMC_DB_PORT: 5432
+      TMC_DB_NAME: "${TMC_DB_NAME:-tmc_attendance}"
+      TMC_DB_USERNAME: "${TMC_DB_USERNAME:-tmc}"
+      TMC_DB_PASSWORD: "${TMC_DB_PASSWORD:?Cần mật khẩu PostgreSQL}"
       TMC_CORS_ORIGINS: "${TMC_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
-    command: ["--spring.profiles.active=workplace", "--server.port=8080"]
+      TMC_TRUST_LOOPBACK_PROXY: "${TMC_TRUST_LOOPBACK_PROXY:-false}"
+      TMC_TRUSTED_PROXY_IP: "${TMC_TRUSTED_PROXY_IP:-}"
+      TMC_EDGE_SYNC_TOKEN: "${TMC_EDGE_SYNC_TOKEN:-}"
+      TMC_CENTRAL_ENABLED: "${TMC_CENTRAL_ENABLED:-false}"
+      TMC_CENTRAL_ATTENDANCE: "${TMC_CENTRAL_ATTENDANCE:-false}"
+      TMC_CENTRAL_URL: "${TMC_CENTRAL_URL:-http://localhost:8090}"
+    command: ["--spring.profiles.active=workplace,postgres", "--server.port=8080"]
     volumes:
-      - workplace-data:/app/data
       - workplace-exports:/app/exports
 
 volumes:
-  workplace-data:
+  postgres-data:
   workplace-exports:

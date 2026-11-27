@@ -24,15 +24,18 @@ public final class StationQrTokens {
   private static final JOSEObjectType TYPE = new JOSEObjectType("tmc-station-qr+jwt");
   private static final String ISSUER = "tmc-workplace";
   private static final String AUDIENCE = "tmc-station-check-in";
-  private static final long TTL_SECONDS = 30;
+  private static final long TTL_SECONDS = 15;
+  private static final long SKEW_SECONDS = 5;
   private final MACSigner signer;
   private final MACVerifier verifier;
 
   public StationQrTokens(String secret) {
+    byte[] decoded = Base64.getDecoder().decode(secret);
+    if (decoded.length < 32) throw new IllegalArgumentException("Station QR signing key must be at least 32 bytes");
     try {
       var digest = MessageDigest.getInstance("SHA-256");
       digest.update("tmc-station-qr\0".getBytes(StandardCharsets.UTF_8));
-      byte[] key = digest.digest(Base64.getDecoder().decode(secret));
+      byte[] key = digest.digest(decoded);
       signer = new MACSigner(key);
       verifier = new MACVerifier(key);
     } catch (NoSuchAlgorithmException | JOSEException invalid) {
@@ -62,11 +65,16 @@ public final class StationQrTokens {
           || !jwt.verify(verifier)) return Optional.empty();
       var claims = jwt.getJWTClaimsSet();
       if (!ISSUER.equals(claims.getIssuer()) || !List.of(AUDIENCE).equals(claims.getAudience())
-          || claims.getIssueTime() == null || claims.getIssueTime().toInstant().isAfter(now)
-          || claims.getExpirationTime() == null || claims.getSubject() == null || claims.getJWTID() == null
-          || claims.getStringClaim("site") == null || claims.getStringClaim("dir") == null) return Optional.empty();
-      return Optional.of(new Proof(claims.getJWTID(), claims.getSubject(), claims.getStringClaim("site"),
-          claims.getStringClaim("dir"), claims.getExpirationTime().toInstant()));
+          || claims.getIssueTime() == null || claims.getExpirationTime() == null
+          || claims.getSubject() == null || claims.getJWTID() == null) return Optional.empty();
+      var issuedAt = claims.getIssueTime().toInstant();
+      var expiresAt = claims.getExpirationTime().toInstant();
+      if (issuedAt.isAfter(now.plusSeconds(SKEW_SECONDS)) || !expiresAt.isAfter(now.minusSeconds(SKEW_SECONDS))
+          || !expiresAt.isAfter(issuedAt) || expiresAt.isAfter(issuedAt.plusSeconds(TTL_SECONDS))) return Optional.empty();
+      String site = claims.getStringClaim("site");
+      String direction = claims.getStringClaim("dir");
+      if (site == null || !("ENTRY".equals(direction) || "EXIT".equals(direction))) return Optional.empty();
+      return Optional.of(new Proof(claims.getJWTID(), claims.getSubject(), site, direction, expiresAt));
     } catch (ParseException | JOSEException invalid) {
       return Optional.empty();
     }

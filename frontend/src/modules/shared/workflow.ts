@@ -4,20 +4,41 @@ export type Group = "STAFF" | "MANAGER" | "EXECUTIVE";
 export type Employee = { id: string; name: string; accessGroup: Group; siteId: string };
 export type AttendanceStatus = {
   employeeId: string;
-  status: "NOT_ENTERED" | "IN_SHIFT" | "LEFT";
+  status: "NOT_ENTERED" | "IN_SHIFT" | "BETWEEN_PAIRS" | "LEFT";
   lastEntry: string | null;
   lastExit: string | null;
   workDate: string;
 };
 export type Pass = AttendanceStatus & { token: string; expiresAt: string };
 export type Direction = "ENTRY" | "EXIT";
+export type GateIncident = {
+  eventId: string;
+  employeeName: string;
+  employeeId: string;
+  stationId: string;
+  siteId: string;
+  direction: Direction;
+  scannedAt: string;
+};
 export type StationCheckIn = {
+  eventId?: string;
   direction: Direction;
   decision: "ALLOW" | "DENY";
   reasonCode: string | null;
   command: string;
+  evidence?: string | null;
   scannedAt: string;
 };
+export type BrowserDevice = {
+  reference: string;
+  code: string;
+  name: string | null;
+  label: string | null;
+  lastLogin: string | null;
+  trusted: boolean;
+  current: boolean;
+};
+export type DeviceList = { canManage: boolean; devices: BrowserDevice[] };
 export type StationCode = { code: string; expiresAt: string };
 export type EmployeeActivity = {
   employeeId: string;
@@ -117,7 +138,22 @@ export const accountApi = {
     }),
 };
 
+function devicePath(employeeId?: string) {
+  return employeeId
+    ? `/workplace/v1/hr/employees/${encodeURIComponent(employeeId)}/devices`
+    : "/workplace/v1/me/devices";
+}
+
 export const workflow = {
+  config: (signal: AbortSignal) =>
+    request<{ personalSelfEnabled: boolean }>("/workplace/v1/config", { signal }),
+  devices: (signal: AbortSignal, employeeId?: string) =>
+    request<DeviceList>(devicePath(employeeId), { signal }),
+  changeDevice: (reference: string, trusted: boolean, employeeId?: string) =>
+    request<void>(`${devicePath(employeeId)}/${encodeURIComponent(reference)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ trusted }),
+    }),
   employee: (signal: AbortSignal) => request<Employee>("/workplace/v1/me/employee", { signal }),
   pass: (signal: AbortSignal, direction?: Direction) =>
     request<Pass>("/workplace/v1/me/qr", {
@@ -143,6 +179,17 @@ export const workflow = {
       method: "POST",
       body: JSON.stringify({ code }),
       signal,
+    }),
+  checkInStatus: (eventId: string, signal: AbortSignal) =>
+    request<StationCheckIn>(`/workplace/v1/me/check-in/status/${encodeURIComponent(eventId)}`, {
+      signal,
+    }),
+  gateIncidents: (signal: AbortSignal) =>
+    request<{ canReview: boolean; incidents: GateIncident[] }>("/gates/v1/incidents", { signal }),
+  reviewGateIncident: (eventId: string, passed: boolean, note: string) =>
+    request<void>(`/gates/v1/incidents/${encodeURIComponent(eventId)}/review`, {
+      method: "POST",
+      body: JSON.stringify({ passed, note }),
     }),
   personalCheckIn: (code: string, signal: AbortSignal) =>
     request<StationCheckIn>("/workplace/v1/me/check-in/personal", {

@@ -10,6 +10,7 @@ import {
 } from "../../shared/lib/qr-link";
 import { QrCanvas } from "../../shared/ui/QrCanvas";
 import { AppPage } from "../../shared/ui/AppPage";
+import { TrustedDevicesPanel } from "../../shared/ui/TrustedDevicesPanel";
 import { RequireAccount } from "../../shared/ui/Auth";
 import { EmployeeActivityPanel } from "./EmployeeActivityPanel";
 import { EmployeeCheckIn } from "./EmployeeCheckIn";
@@ -44,10 +45,12 @@ function qrLifetimeMs(token: string): number | undefined {
 function EmployeePass({
   employee,
   confirmationView,
+  personalSelfEnabled,
   onFinishedChange,
 }: {
   employee: Employee;
   confirmationView: boolean;
+  personalSelfEnabled: boolean;
   onFinishedChange: (finished: boolean) => void;
 }) {
   const [mode, setMode] = useState<QrMode | null>(null);
@@ -60,7 +63,7 @@ function EmployeePass({
   const today = liveAttendance ?? pass;
   const confirmed = today?.status === "IN_SHIFT";
   const left = today?.status === "LEFT";
-  const currentMode = mode ?? (confirmed || left ? null : "ENTRY");
+  const currentMode = mode ?? (personalSelfEnabled && !confirmed && !left ? "ENTRY" : null);
   const guardMode = currentMode === "GUARD";
   const showQr = !confirmationView && !left && currentMode !== null;
 
@@ -180,9 +183,11 @@ function EmployeePass({
       ? "Đã ghi nhận giờ vào"
       : today?.status === "LEFT"
         ? "Đã ghi nhận giờ ra"
-        : today
-          ? "Chưa vào"
-          : "Đang kiểm tra";
+        : today?.status === "BETWEEN_PAIRS"
+          ? "Đã ghi nhận giờ ra · Có thể vào ca tiếp"
+          : today
+            ? "Chưa vào"
+            : "Đang kiểm tra";
   return (
     <div className="workflow-pass-content">
       <div className="workflow-person">
@@ -204,7 +209,7 @@ function EmployeePass({
           {today?.lastEntry && (
             <p>
               Giờ vào {displayTime(today.lastEntry)}
-              {today.status === "LEFT" && today.lastExit
+              {(today.status === "LEFT" || today.status === "BETWEEN_PAIRS") && today.lastExit
                 ? ` · Giờ ra ${displayTime(today.lastExit)}`
                 : ""}
             </p>
@@ -220,7 +225,7 @@ function EmployeePass({
       )}
       {!confirmationView && !left && (
         <div className="workflow-actions">
-          {confirmed && (
+          {personalSelfEnabled && confirmed && (
             <button
               type="button"
               className="workflow-button"
@@ -237,9 +242,9 @@ function EmployeePass({
             onClick={() => openQr(guardMode ? null : "GUARD")}
           >
             {guardMode
-              ? confirmed
-                ? "Ẩn QR cho bảo vệ"
-                : "Về QR cá nhân"
+              ? personalSelfEnabled && !confirmed
+                ? "Về QR cá nhân"
+                : "Ẩn QR cho bảo vệ"
               : "Mở QR cho bảo vệ quét"}
           </button>
         </div>
@@ -251,7 +256,7 @@ function EmployeePass({
               ? "Mã QR cho bảo vệ"
               : currentMode === "EXIT"
                 ? "Mã QR giờ ra"
-                : "Mã QR của tôi"}
+                : "Chấm công cá nhân tự quét"}
           </h3>
           <div className="workflow-qr">
             {pass && canScan ? (
@@ -272,7 +277,7 @@ function EmployeePass({
               {guardMode
                 ? `Đưa mã cho bảo vệ tại ${siteName(employee.siteId)}. Trạm được giao sẽ ghi giờ vào hoặc ra.`
                 : phoneLink
-                  ? `Quét mã bằng điện thoại đã đăng nhập cùng tài khoản để ghi giờ ${currentMode === "EXIT" ? "ra" : "vào"}.`
+                  ? `Quét mã bằng điện thoại đã đăng nhập cùng tài khoản để gửi giờ ${currentMode === "EXIT" ? "ra" : "vào"} cho Nhân sự.`
                   : "Trên điện thoại, dùng mục Quét QR chấm công để đọc mã này."}
             </p>
           )}
@@ -355,12 +360,21 @@ function EmployeeProfile({
   clearLink: () => void;
 }) {
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const [personalSelfEnabled, setPersonalSelfEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [qrRevision, setQrRevision] = useState(0);
   const [finished, setFinished] = useState<boolean | null>(null);
   useEffect(() => {
     const controller = new AbortController();
+    void workflow
+      .config(controller.signal)
+      .then((config) => {
+        if (!controller.signal.aborted) setPersonalSelfEnabled(config.personalSelfEnabled);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setPersonalSelfEnabled(false);
+      });
     workflow
       .employee(controller.signal)
       .then((person) => {
@@ -382,6 +396,7 @@ function EmployeeProfile({
         <EmployeeCheckIn
           linkedCode={linkedCode}
           confirmationView={confirmationView}
+          personalSelfEnabled={personalSelfEnabled}
           finished={finished === true}
           clearLink={clearLink}
           onRecorded={() => setQrRevision((revision) => revision + 1)}
@@ -410,10 +425,12 @@ function EmployeeProfile({
             key={`${employee.id}-${qrRevision}`}
             employee={employee}
             confirmationView={confirmationView}
+            personalSelfEnabled={personalSelfEnabled === true}
             onFinishedChange={setFinished}
           />
         )}
       </section>
+      {employee && <TrustedDevicesPanel className="workflow-card workflow-pass" />}
       {employee && (
         <EmployeeActivityPanel
           employeeId={employee.id}

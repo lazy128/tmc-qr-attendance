@@ -28,7 +28,7 @@ public class TimesheetService {
   @Transactional
   public void project(String id, Instant scannedAt) {
     if (id == null) return;
-    var day = calculator.workDate(scannedAt);
+    var day = calculator.workDateFor(id, scannedAt);
     sheets.lock(id, day);
     calculate(id, day).ifPresent(result -> sheets.saveIfChanged(result.row()));
   }
@@ -43,7 +43,7 @@ public class TimesheetService {
     var result = calculate(id, date).orElseThrow(() -> new IllegalStateException("Không có bản công cho ngày này."));
     var open = result.unpairedEntry();
     if (open == null || sheets.adjustment(id, date) != null) throw new IllegalStateException("Ca này không còn thiếu giờ ra.");
-    if (!exit.isAfter(open) || !exit.isBefore(calculator.start(date.plusDays(1)))) {
+    if (!exit.isAfter(open) || !date.equals(calculator.workDateFor(id, exit))) {
       throw new IllegalArgumentException("Giờ ra phải sau giờ vào và trong cùng ngày công.");
     }
     sheets.addAdjustment(id, date, exit, reason.strip(), actor);
@@ -55,7 +55,10 @@ public class TimesheetService {
 
   public List<TimesheetRow> month(YearMonth month) { return sheets.month(month); }
   public List<AttendanceRecord> scans(String id, LocalDate date) {
-    return events.forEmployeeBetween(id, calculator.start(date), calculator.start(date.plusDays(1)));
+    var range = calculator.calendar().searchRange(id, date);
+    return events.forEmployeeBetween(id, range.start(), range.endExclusive()).stream()
+        .filter(scan -> date.equals(calculator.workDateFor(id, scan.scannedAt())))
+        .toList();
   }
 
   public Optional<TimesheetCalculator.Calculation> calculate(String id, LocalDate date) {

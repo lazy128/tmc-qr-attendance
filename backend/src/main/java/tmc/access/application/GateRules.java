@@ -6,7 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Optional;
-import java.util.Map;
+import tmc.shared.ShiftCalendar;
 import tmc.access.domain.AccessRequest;
 import tmc.access.domain.AccessStates.Reason;
 import tmc.access.domain.Gate;
@@ -39,16 +39,11 @@ public final class GateRules {
 
   public record Window(LocalTime open, LocalTime close) {}
 
-  public record ShiftWindowRule(ZoneId zone, Duration grace, Map<String, Window> employeeShifts) implements AccessRule {
-    public ShiftWindowRule {
-      employeeShifts = Map.copyOf(employeeShifts);
-    }
-
-    public ShiftWindowRule(ZoneId zone, Duration grace) { this(zone, grace, Map.of()); }
+  public record ShiftWindowRule(ZoneId zone, Duration grace, ShiftCalendar calendar) implements AccessRule {
+    public ShiftWindowRule(ZoneId zone, Duration grace) { this(zone, grace, null); }
 
     @Override public Optional<Reason> evaluate(Employee employee, Gate gate, AccessRequest request, Instant now) {
-      var shift = employeeShifts.get(employee.shiftId());
-      boolean outsideEmployeeShift = !employeeShifts.isEmpty() && (shift == null || !matches(shift, now));
+      boolean outsideEmployeeShift = calendar != null && !calendar.withinAssignedShift(employee, now);
       boolean outsideGateHours = gate.opensAt() != null && gate.closesAt() != null
           && !matches(new Window(gate.opensAt(), gate.closesAt()), now);
       return denied(outsideEmployeeShift || outsideGateHours, Reason.OUTSIDE_SHIFT);

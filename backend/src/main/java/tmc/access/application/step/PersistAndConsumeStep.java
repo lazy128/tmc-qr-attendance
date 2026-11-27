@@ -7,7 +7,9 @@ import tmc.access.domain.AccessAttempt;
 import tmc.access.domain.AntiPassbackException;
 import tmc.access.domain.AccessRequest;
 import tmc.access.domain.CredentialChangedException;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.AccessStates.Command;
+import tmc.access.domain.AccessStates.Evidence;
 import tmc.access.domain.AccessStates.Decision;
 import tmc.access.domain.AccessStates.Passage;
 import tmc.access.domain.AccessStates.Reason;
@@ -39,6 +41,7 @@ public final class PersistAndConsumeStep implements VerificationStep {
   @Override
   public StepResult execute(AccessRequest request, AccessContext context) {
     var claims = context.claims;
+    boolean selfReported = request.channel() == Channel.PERSONAL_SELF;
     var attempt = new AccessAttempt(
         request.eventId(),
         request.correlationId(),
@@ -53,12 +56,13 @@ public final class PersistAndConsumeStep implements VerificationStep {
         claims.jti(),
         Decision.ALLOW,
         null,
-        Command.SENT,
-        sensorConfigured ? Passage.UNCONFIRMED : Passage.NOT_AVAILABLE,
+        selfReported ? Command.NOT_SENT : Command.SENT,
+        sensorConfigured && !selfReported ? Passage.UNCONFIRMED : Passage.NOT_AVAILABLE,
         false,
-        null,
+        selfReported ? Evidence.SELF_REPORTED : null,
         false,
-        context.attendanceGate
+        context.attendanceGate,
+        request.channel()
     );
     try {
       attempts.persistPrepared(attempt, claims.jti());

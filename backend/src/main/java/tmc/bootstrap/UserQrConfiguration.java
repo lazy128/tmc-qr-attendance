@@ -21,9 +21,10 @@ public class UserQrConfiguration {
       ClockProvider clock,
       IdGenerator ids,
       @Value("${tmc.qr.ttl-seconds:30}") long ttl,
+      @Value("${tmc.qr.personal-link-ttl-seconds:60}") long personalTtl,
       @Value("${tmc.qr.signing-kid:demo}") String kid
   ) {
-    return new IssueQrToken(credentials, codec, clock, ids, Duration.ofSeconds(ttl), "tmc", "tmc-gates", kid);
+    return new IssueQrToken(credentials, codec, clock, ids, Duration.ofSeconds(ttl), Duration.ofSeconds(personalTtl), "tmc", "tmc-gates", kid);
   }
 
   @Bean

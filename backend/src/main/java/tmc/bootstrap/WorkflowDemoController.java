@@ -100,7 +100,7 @@ public class WorkflowDemoController {
   }
 
   private Attendance attendanceFor(String id, Instant now) {
-    var day = timesheets.calculate(id, calculator.workDate(now));
+    var day = timesheets.calculate(id, calculator.workDateFor(id, now));
     String status = day.map(data -> data.unpairedEntry() != null ? "IN_SHIFT"
         : data.row().lastOut() != null ? "LEFT" : "NOT_ENTERED").orElse("NOT_ENTERED");
     var lastEntry = day.map(TimesheetCalculator.Calculation::lastEntry).orElse(null);

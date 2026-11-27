@@ -14,9 +14,9 @@ public final class WorkplacePolicy implements PermissionPolicy, ScopeResolver {
   private static final Map<Role, Set<String>> PERMISSIONS = Map.of(
       Role.EMPLOYEE, Set.of("attendance:read", "qr:issue"),
       Role.MANAGER, Set.of("attendance:read", "qr:issue"),
-      Role.HR, Set.of("attendance:read", "attendance:export", "attendance:correct", "qr:revoke", "qr:enroll-device"),
+      Role.HR, Set.of("attendance:read", "attendance:export", "attendance:correct", "gates:review-incidents", "qr:revoke", "qr:enroll-device"),
       Role.GUARD, Set.of("stations:read-assigned", "presence:correct"),
-      Role.ADMIN, Set.of("stations:manage", "system:configure", "attendance:read", "attendance:export", "attendance:correct"));
+      Role.ADMIN, Set.of("stations:manage", "system:configure", "attendance:read", "attendance:export", "attendance:correct", "gates:review-incidents"));
   private final WorkplaceAccounts accounts;
 
   public WorkplacePolicy(WorkplaceAccounts accounts) { this.accounts = accounts; }

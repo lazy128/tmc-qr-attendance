@@ -4,7 +4,7 @@
 
 ## Chạy và kiểm thử
 
-Cần Node.js 24. Sau khi chạy backend profile `workplace`, thực hiện trong `frontend/`.
+Cần Node.js 24. Sau khi chạy backend bằng Docker Compose, thực hiện trong `frontend/`.
 
 ```powershell
 npm ci
@@ -14,7 +14,7 @@ npm run dev -- --strictPort
 
 Mở [TMC Chấm công](http://localhost:5173). Các mục điều hướng xuất hiện theo quyền của tài khoản đang đăng nhập. `/employee` cấp QR cho chính người dùng. `/gate` xác minh tại trạm đã gán cho Bảo vệ. `/attendance` hiển thị bảng công theo phạm vi. `/stations` quản lý tài khoản và trạm.
 
-`TMC_DEV_PROXY_TARGET` mặc định là `http://127.0.0.1:8084`. Đặt `VITE_QR_SCAN_ORIGIN` khi màn hình hiển thị mã dùng localhost nhưng thiết bị quét mở liên kết qua LAN hoặc HTTPS. Triển khai qua proxy cùng origin và giữ cookie bảo mật. [Cách thiết lập bản nộp](../README.md#chạy-bản-nộp)
+`TMC_DEV_PROXY_TARGET` mặc định là `http://127.0.0.1:8085`. Đặt `VITE_QR_SCAN_ORIGIN` khi màn hình hiển thị mã dùng localhost nhưng thiết bị quét mở liên kết qua LAN hoặc HTTPS. Triển khai qua proxy cùng origin và giữ cookie bảo mật. [Cách thiết lập bản nộp](../README.md#chạy-bản-nộp)
 
 ```powershell
 npm run typecheck

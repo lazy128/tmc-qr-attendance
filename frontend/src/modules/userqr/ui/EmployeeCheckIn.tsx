@@ -7,11 +7,24 @@ import { errorMessage } from "../../shared/lib/error-message";
 import { checkInCodeFromQr, type CheckInCode } from "../../shared/lib/qr-link";
 import { displayTime, workflow, type StationCheckIn } from "../../shared/workflow";
 
+type CheckInRequest = CheckInCode | { kind: "status"; code: string };
+
 function outcome(result: StationCheckIn) {
+  if (result.evidence === "SELF_REPORTED") {
+    return `Đã gửi giờ ${result.direction === "ENTRY" ? "vào" : "ra"} để Nhân sự duyệt.`;
+  }
+  if (result.reasonCode === "COMMAND_PENDING") return "Lượt trước đang chờ xác nhận cổng.";
   if (result.command === "SENT" || result.command === "UNKNOWN") {
     return "Lượt chấm công đang chờ kết quả. Bấm Kiểm tra lại để xem trạng thái.";
   }
-  if (result.decision === "ALLOW" && result.command === "ACKED") {
+  if (result.evidence === "MANUAL_NO_PASSAGE") return "Nhân sự xác nhận lượt này chưa qua cổng.";
+  if (result.command === "EXPIRED" && result.evidence !== "MANUAL_PASSAGE") {
+    return "Lượt này đã chuyển cho Nhân sự đối soát. Bạn có thể quét mã mới.";
+  }
+  if (
+    result.decision === "ALLOW" &&
+    (result.command === "ACKED" || result.evidence === "MANUAL_PASSAGE")
+  ) {
     return `Đã ghi nhận giờ ${result.direction === "ENTRY" ? "vào" : "ra"} · ${displayTime(result.scannedAt)}`;
   }
   if (result.reasonCode === "ANTI_PASSBACK") {
@@ -27,12 +40,14 @@ function outcome(result: StationCheckIn) {
 export function EmployeeCheckIn({
   linkedCode,
   confirmationView,
+  personalSelfEnabled,
   finished,
   clearLink,
   onRecorded,
 }: {
   linkedCode: CheckInCode | null;
   confirmationView: boolean;
+  personalSelfEnabled: boolean | null;
   finished: boolean;
   clearLink: () => void;
   onRecorded: () => void;
@@ -40,7 +55,7 @@ export function EmployeeCheckIn({
   const request = useRef<AbortController | null>(null);
   const [camera, setCamera] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [retryCode, setRetryCode] = useState<CheckInCode | null>(null);
+  const [retryCode, setRetryCode] = useState<CheckInRequest | null>(null);
   const [result, setResult] = useState<StationCheckIn | null>(null);
   const [error, setError] = useState("");
   const canStream =
@@ -50,13 +65,17 @@ export function EmployeeCheckIn({
 
   const confirmPersonal = useEffectEvent((scan: CheckInCode) => void submit(scan));
   useEffect(() => {
-    if (linkedCode?.kind !== "personal") return;
+    if (linkedCode?.kind !== "personal" || personalSelfEnabled !== true) return;
     const timer = window.setTimeout(() => confirmPersonal(linkedCode), 0);
     return () => window.clearTimeout(timer);
-  }, [linkedCode]);
+  }, [linkedCode, personalSelfEnabled]);
 
-  async function submit(scan: CheckInCode) {
+  async function submit(scan: CheckInRequest) {
     if (request.current) return;
+    if (scan.kind === "personal" && personalSelfEnabled !== true) {
+      setError("Hãy quét mã QR được hiển thị tại cổng.");
+      return;
+    }
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
@@ -67,12 +86,28 @@ export function EmployeeCheckIn({
     clearLink();
     try {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(6000)]);
-      const record = scan.kind === "personal" ? workflow.personalCheckIn : workflow.checkIn;
+      const record =
+        scan.kind === "status"
+          ? workflow.checkInStatus
+          : scan.kind === "personal"
+            ? workflow.personalCheckIn
+            : workflow.checkIn;
       const response = await record(scan.code, signal);
       if (controller.signal.aborted) return;
       setResult(response);
-      if (response.command === "SENT" || response.command === "UNKNOWN") setRetryCode(scan);
-      if (response.decision === "ALLOW" && response.command === "ACKED") onRecorded();
+      const pending =
+        response.command === "SENT" ||
+        response.command === "UNKNOWN" ||
+        (response.command === "EXPIRED" &&
+          response.evidence !== "MANUAL_PASSAGE" &&
+          response.evidence !== "MANUAL_NO_PASSAGE");
+      if (pending)
+        setRetryCode(response.eventId ? { kind: "status", code: response.eventId } : scan);
+      if (
+        response.decision === "ALLOW" &&
+        (response.command === "ACKED" || response.evidence === "MANUAL_PASSAGE")
+      )
+        onRecorded();
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (!(cause instanceof ApiRequestError) || cause.retryable) {
@@ -115,12 +150,15 @@ export function EmployeeCheckIn({
   return (
     <section className="workflow-card workflow-pass grid gap-3">
       <h2>{confirmationView ? "Xác nhận chấm công" : "Quét QR chấm công"}</h2>
+      {linkedCode?.kind === "personal" && personalSelfEnabled === false && (
+        <p role="alert">Tự khai qua QR cá nhân hiện đang tắt. Hãy quét mã tại cổng.</p>
+      )}
       {finished && !busy && !result && !error && <p>Đã kết thúc ngày công.</p>}
       {!finished &&
         (linkedCode?.kind === "station" ? (
           <p>Đã đọc mã tại cổng. Bấm Xác nhận chấm công để ghi giờ vào hoặc ra.</p>
         ) : (
-          !confirmationView && <p>Dùng camera để quét QR đang hiển thị trên máy tính.</p>
+          !confirmationView && <p>Dùng camera điện thoại để quét mã đang hiển thị tại cổng.</p>
         ))}
       {!finished && camera && (
         <div className="workflow-camera">

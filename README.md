@@ -8,21 +8,24 @@ Hệ thống chấm công bằng QR dành cho Assignment M2. Edge xác minh lư�
 
 ## Chạy bản nộp
 
-Cần **Java 21** và **Node.js 24**. Profile mặc định `workplace` lưu dữ liệu H2 tại `backend/data/tmc-workplace.mv.db` và khởi tạo cổng vào, cổng ra tại cả Bình Dương lẫn Long An. Quản trị viên khai báo tài khoản và nhân viên theo nhà máy.
+Cần **Docker Desktop** và **Node.js 24**. Docker Compose chạy Edge và PostgreSQL, với cơ sở dữ liệu riêng `tmc_attendance`. Edge khởi tạo cổng vào và cổng ra ở cả Bình Dương lẫn Long An.
+
+Lần đầu, sao chép `backend/.env.example` thành `backend/.env`. Điền mật khẩu PostgreSQL riêng, khóa phiên ngẫu nhiên Base64 ít nhất 32 byte và mật khẩu quản trị tạm ít nhất 12 ký tự nếu DB đang trống. Dùng `TMC_SESSION_SECURE=false` khi thử qua HTTP trên máy cá nhân.
 
 ~~~powershell
 # Terminal backend, chạy từ thư mục gốc
-$env:TMC_TRUST_LOOPBACK_PROXY = 'true'
-.\backend\scripts\start-workplace.ps1 -Initialize -AllowHttp
+cd backend
+docker compose up -d --build
 ~~~
 
-Nhập mật khẩu tạm ít nhất 12 ký tự khi khởi tạo. Tài khoản đầu tiên là `admin`, có thể cấu hình qua `TMC_ADMIN_USERNAME`. Các lần khởi động sau dùng cùng lệnh bỏ `-Initialize`. `-AllowHttp` dành cho máy cá nhân hoặc mạng thử nghiệm riêng.
+Trong TablePlus, dùng kết nối PostgreSQL tại `127.0.0.1:55432`, database `tmc_attendance`, user `tmc` và mật khẩu lấy từ `TMC_DB_PASSWORD` trong `backend/.env`. [Cách chuyển dữ liệu H2](backend/README.md#chuyển-dữ-liệu-h2-sang-postgresql)
 
 ~~~powershell
 # Terminal frontend, chạy từ thư mục gốc
 cd frontend
 npm ci
 $env:VITE_EDGE_API_URL = '/edge-api'
+$env:TMC_DEV_PROXY_TARGET = 'http://127.0.0.1:8085'
 npm run dev -- --strictPort
 ~~~
 
@@ -30,43 +33,42 @@ Mở [TMC Chấm công](http://localhost:5173). Đăng nhập bằng tài khoả
 
 | Vai trò | Màn hình và quyền |
 | --- | --- |
-| Nhân viên | Mở **Chấm công cá nhân** để hiện QR riêng, xác nhận bằng điện thoại và xem bảng công của mình. |
+| Nhân viên | Quét QR tại cổng, hiện QR cho bảo vệ khi cần và xem bảng công của mình. |
 | Quản lý | Chấm công cá nhân và xem bảng công trong cùng bộ phận, nhà máy. |
 | Bảo vệ | Hiện QR cho nhân viên quét hoặc quét mã cá nhân tại đúng trạm được gán. |
 | Nhân sự | Xem bảng công, bổ sung giờ ra kèm lý do và xuất CSV hoặc XLSX theo tháng. |
 | Quản trị viên | Quản lý tài khoản và trạm theo nhà máy. Dùng **Bảng công & Excel** để xem, bổ sung giờ ra và tải Excel hoặc CSV theo bộ lọc. |
 
-### Chấm công bằng QR cá nhân
+### Chấm công tại Bình Dương và Long An
 
-Đăng nhập nhân viên trên máy tính và mở **Chấm công cá nhân**. Màn hình hiển thị **Mã QR của tôi**. Trên điện thoại, dùng cùng tài khoản nhân viên và mở liên kết từ Camera, hoặc quét bằng mục **Quét QR chấm công**. Máy chủ kiểm tra chủ mã, thời hạn và trạng thái chấm công. Khi ghi giờ vào thành công, điện thoại hiện kết quả và máy tính thay QR bằng **Đã xác nhận chấm công**.
+Nhân viên đăng nhập trên điện thoại và vào **Chấm công cá nhân → Quét QR chấm công**. Quét mã đang hiển thị tại cổng vào của chi nhánh được phân công. Nếu dùng Camera của điện thoại để mở liên kết, bấm **Xác nhận chấm công**. Khi lượt được ghi, trang đang mở trên máy tính cũng tự cập nhật. Cuối ca, quét mã tại cổng ra. Sau khi đủ số cặp vào/ra của ngày công, màn hình hiển thị **Đã kết thúc ngày công**.
 
-Cuối ca, bấm **Mở QR giờ ra** trên máy tính rồi quét bằng điện thoại. Mã có hướng giờ ra được ký và ghi ở cổng ra của chi nhánh. Sau khi ghi giờ ra, trang hiển thị giờ vào, giờ ra và trạng thái **Đã kết thúc ngày công**. Khi sang ngày công mới lúc 06:00 giờ Việt Nam theo mặc định, màn hình tự chuyển về QR giờ vào mới. Ca trước quên quét ra được giữ ở trạng thái thiếu giờ ra để đối chiếu.
+Bảo vệ mở mã tại trạm được giao. Quản trị viên có thể vào **Quản trị → Trạm quét → Hiện mã tại cổng**. Mã tại cổng có hiệu lực 15 giây, làm mới mỗi 5 giây và xác định chi nhánh, trạm và hướng. Mỗi nhân viên chỉ dùng cùng một mã cổng cho một lượt. Một ảnh mã cổng vẫn có thể bị chuyển cho người khác trong 15 giây.
 
-Chi nhánh chấm công lấy từ hồ sơ do quản trị viên cấp. Khi cần bảo vệ xác nhận tại trạm, nhân viên chọn **Mở QR cho bảo vệ quét** và đưa mã cho bảo vệ ở chi nhánh được phân công.
+Khi bảo vệ trực tiếp xác minh người tại cổng, nhân viên chọn **Mở QR cho bảo vệ quét**. Mã này có hiệu lực 30 giây. Trạm của bảo vệ xác định hướng vào hoặc ra.
 
-Mã cá nhân có hiệu lực 3 phút và mỗi mã chỉ ghi một lượt. Luồng này xác thực tài khoản và mã, nên người có quyền truy cập cùng tài khoản vẫn có thể quét mã từ xa. Dùng quy trình xác minh tại cổng khi cần đối chiếu người có mặt.
+Trình duyệt đăng nhập đầu tiên được tin cậy. Trên thiết bị mới, đăng nhập rồi xem mã thiết bị trong **Thiết bị chấm công**. Dùng một thiết bị đã tin cậy để duyệt mã đó, hoặc nhờ Nhân sự chọn nhân viên trong **Bảng công theo ngày** rồi duyệt. Mỗi tài khoản có tối đa ba thiết bị tin cậy.
 
-### Quét QR tại cổng
+Ngày công được xác định theo ca của nhân viên, gồm thời gian đến sớm và ra muộn. Mốc 06:00 dùng khi lượt quét nằm ngoài cửa sổ ca. Mặc định mỗi ngày công có một cặp giờ vào/ra. Dữ liệu thiếu giờ ra của ca trước còn trong bảng công để Nhân sự đối chiếu.
 
-Trên màn hình tại cổng, quản trị viên chọn **Quản trị → Trạm quét → Hiện mã tại cổng** ở dòng cổng vào hoặc ra. Bảo vệ cũng có thể hiện QR ở trạm được giao. Trên điện thoại, nhân viên đăng nhập tài khoản của mình, vào **Chấm công cá nhân → Quét QR chấm công** và quét mã. Nếu mở liên kết từ Camera của điện thoại, bấm **Xác nhận chấm công**. Các phiên đang mở trên máy khác tự cập nhật sau khi lượt công được lưu.
-
-Mã cổng đổi tự động và có hiệu lực 30 giây kể từ lúc phát. Mã ràng buộc với cơ sở, trạm và hướng đã cấu hình. Máy chủ lấy nhân viên từ phiên đăng nhập và ghi tối đa một lượt cho mỗi nhân viên với cùng mã cổng. Một ảnh mã cổng được gửi đi trong thời hạn vẫn có thể được dùng từ xa bởi tài khoản cùng cơ sở. Khi cần xác minh người có mặt, bảo vệ đối chiếu thẻ và dùng chức năng quét mã cá nhân tại trạm.
+Tự khai bằng QR cá nhân tắt mặc định. Khi chạy riêng với profile `workplace,personal-self-demo`, mã tự khai có hiệu lực 60 giây và gửi lượt cho Nhân sự xem xét. Lượt tự khai không mở cổng và không cộng giờ công. Chi tiết về các kênh và giới hạn xác minh có trong [ADR về QR tại cổng](docs/adr/ADR-001-station-qr-presence.md).
 
 - Với HTTPS, cấu hình chứng chỉ thông qua `TMC_DEV_HTTPS_CERT` và `TMC_DEV_HTTPS_KEY`, rồi để cookie ở chế độ bảo mật mặc định. Thiết bị quét phải tin cậy chứng chỉ. Dùng `npm run dev -- --host 0.0.0.0 --strictPort` để mở ứng dụng trong mạng nội bộ.
-- Khi kiểm tra qua Wi‑Fi riêng với HTTP, đặt `-FrontendOrigin 'http://192.168.1.25:5173'` và `-AllowHttp` ở backend, dùng IP LAN thật. Trình duyệt trên điện thoại có thể **Chụp mã QR** hoặc mở liên kết đọc bởi Camera. `VITE_QR_SCAN_ORIGIN` đặt cùng địa chỉ nếu màn hình nhân viên được mở qua localhost.
+- Khi kiểm tra qua Wi‑Fi riêng với HTTP, thêm origin theo IP LAN vào `TMC_CORS_ORIGINS` và đặt `TMC_SESSION_SECURE=false` trong `backend/.env`. Trình duyệt trên điện thoại có thể **Chụp mã QR** hoặc mở liên kết đọc bởi Camera. `VITE_QR_SCAN_ORIGIN` đặt cùng địa chỉ nếu màn hình nhân viên được mở qua localhost.
 - Khi triển khai, phục vụ ứng dụng và proxy `/edge-api` trên cùng origin HTTPS, giữ backend ở mạng riêng và khai báo origin đó trong `TMC_CORS_ORIGINS`.
 
 Trong **Chấm công cá nhân → Hoạt động tài khoản**, nhân viên xem giờ, cơ sở và cổng của các lượt chấm công gần đây, cùng thời điểm và loại trình duyệt của các lần đăng nhập mới. **Đăng xuất phiên khác** giữ phiên hiện tại, đóng các phiên còn lại và thu hồi mã QR cá nhân đã phát. Nếu nghi lộ mật khẩu, hãy đổi mật khẩu để ngăn đăng nhập lại.
 
-Trong **Lịch sử đăng nhập**, đặt tên thiết bị trên từng trình duyệt, ví dụ **iPhone của An**. Lịch sử hiển thị tên, loại trình duyệt, mã nhận diện, IP lúc đăng nhập và trạng thái phiên. IP có thể dùng chung hoặc thay đổi. Các phiên cũ chưa ghi IP sẽ hiển thị thông tin đã lưu. Chỉ bật `TMC_TRUST_LOOPBACK_PROXY` khi backend đi qua proxy nội bộ đáng tin cậy, như Vite trên cùng máy.
+Trong **Lịch sử đăng nhập**, đặt tên thiết bị trên từng trình duyệt, ví dụ **iPhone của An**. Lịch sử hiển thị tên, loại trình duyệt, mã nhận diện, IP lúc đăng nhập và trạng thái phiên. IP có thể dùng chung hoặc thay đổi. Các phiên cũ chưa ghi IP sẽ hiển thị thông tin đã lưu. Chỉ bật `TMC_TRUST_LOOPBACK_PROXY` hoặc `TMC_TRUSTED_PROXY_IP` khi backend đi qua proxy nội bộ đáng tin cậy, như Vite trên cùng máy.
 
 ### Xử lý sự cố và kiểm soát dữ liệu
 
 - **Mất mạng.** Trạm hiển thị lượt chờ. Khi kết nối lại, Kiosk gửi đúng dữ liệu với cùng `eventId`, kể cả khi phản hồi đầu tiên bị mất. Nếu tải lại trang, chỉ mã lượt được giữ trong phiên tab để tra kết quả đã lưu. Trường hợp máy chủ chưa nhận mã trước khi hết hạn, bảo vệ quét mã mới. Giờ công dùng giờ Edge nhận lượt.
+- **Cổng không phản hồi.** Sau 120 giây, lượt chờ chuyển sang danh sách đối soát để bảo vệ theo dõi và Nhân sự xác minh. Nhân viên có thể quét mới. Chỉ xác nhận đã qua cổng của Nhân sự mới bổ sung giờ công cho lượt đã hết hạn.
 - **Quét đồng thời.** Các trạm gửi độc lập. DB giữ kết quả theo `eventId`, chặn dùng lại JWT theo `(site_id, jti)`, khóa theo thông tin xác thực khi ghi và kiểm tra lại trạng thái vào/ra trước khi chốt. Một lượt có thể được gửi lại nhiều lần nhưng chỉ được ghi một lần.
 - **Đúng nhân viên.** Lượt tự quét lấy danh tính từ tài khoản trên điện thoại và kiểm tra chữ ký QR của cổng. Với lượt quét mã cá nhân, API kiểm tra vai trò bảo vệ và trạm được giao. Kiosk hiện tên nhân viên để đối chiếu tại cổng.
 - **JWT.** Phiên đăng nhập dùng JWT HS256 trong cookie `HttpOnly`, `SameSite=Strict` và mặc định `Secure`. DB kiểm tra phiên còn hiệu lực. Đổi mật khẩu, đặt lại mật khẩu và khóa tài khoản thu hồi các phiên liên quan. Mật khẩu được lưu dưới dạng BCrypt. QR cá nhân dùng JWT ES256 và phiên bản thẻ. QR cổng dùng JWT HS256 với khóa dẫn xuất và loại token riêng.
-- **DB.** Hồ sơ, tài khoản, phiên, trạm, lượt quét, chấm công và nhật ký được lưu trong H2 dạng tệp. Sao lưu tệp DB khi backend đã dừng. Script tạo khóa phiên ở `backend/data/workplace-session.key`. Giữ khóa và bản sao DB riêng tư. Bảng tính được tạo từ chấm công đã lưu và ghi ra `backend/exports/workplace`.
+- **DB.** PostgreSQL trong Docker lưu hồ sơ, tài khoản, phiên, trạm, lượt quét, chấm công và nhật ký trong volume `postgres-data`. TablePlus kết nối qua loopback. Volume `workplace-exports` giữ bảng tính. H2 vẫn dùng cho các bài kiểm thử và cấu hình Edge cũ.
 - **Phạm vi chạy.** Bình Dương và Long An dùng chung một Edge và một DB trong bản nộp. Trạm, quyền quét và báo cáo phân theo nhà máy. Điều khiển turnstile vật lý và đồng bộ nhiều Edge là phần tích hợp riêng.
 
 ## Kiểm thử
@@ -82,7 +84,7 @@ Trong **Lịch sử đăng nhập**, đặt tên thiết bị trên từng trìn
 ## Cách tổ chức repo
 
 ```text
-backend/                 Java, Spring Boot, H2 và test
+backend/                 Java, Spring Boot, PostgreSQL, H2 và test
 frontend/                React, TanStack Start và test
 Phase1_Architecture.md   Thiết kế tổng thể, ADR và truy vết Phase 0–1
 .github/workflows/        CI backend và frontend
@@ -187,7 +189,7 @@ flowchart LR
   subgraph G["recorder : Software attendance"]
     gc["commandSink"]
   end
-  subgraph D["local : H2"]
+  subgraph D["local : PostgreSQL / H2"]
     dj["jdbc"]
   end
   sv -->|C1| ev
@@ -201,7 +203,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  subgraph D["local : H2"]
+  subgraph D["local : PostgreSQL / H2"]
     out["outbox"]
     dj["jdbc"]
   end
@@ -234,7 +236,7 @@ flowchart LR
 | Instance | Vai trò lúc chạy |
 | --- | --- |
 | `station`, `edge` | Trạm gửi JWT phiên cùng QR. Edge đối chiếu quyền của bảo vệ với trạm và lưu quyết định. |
-| `recorder`, `local` | Adapter xác nhận ghi nhận phần mềm. H2 lưu tài khoản, phiên, hồ sơ, trạng thái Access, outbox và attendance. |
+| `recorder`, `local` | Adapter xác nhận ghi nhận phần mềm. DB lưu tài khoản, phiên, hồ sơ, trạng thái Access, outbox và attendance. |
 | `attJob`, `att` | Worker poll kết quả ACKED. Consumer áp dụng eligibility và ghi bản ghi. |
 | `syncJob`, `central` | Worker tùy chọn gửi batch. Receiver demo xử lý và chống trùng trong bộ nhớ. |
 
@@ -243,9 +245,9 @@ flowchart LR
 | C1 | Liền · HTTP request/response | Trạm gọi `POST /access/v1/verify`. Edge trả kết quả và mã lượt. Khi mất phản hồi, trạm gửi lại cùng `eventId` hoặc tra kết quả đã lưu. |
 | C2 | Đậm · JDBC transaction | Edge ghi attempt, JTI, SENT, outbox và audit trước lệnh cổng. Giao dịch sau lưu outcome. |
 | C3 | Liền · Gọi Java trong process | `GateCommandSender` dùng adapter xác nhận phần mềm trong profile `workplace`. |
-| C4 / C7 | Đứt · Outbox, chiều **dữ liệu đi** | Worker chủ động poll H2. C4 nhận kết quả ACKED. C7 chạy khi bật gửi Central và có thể gửi lại. |
+| C4 / C7 | Đứt · Outbox, chiều **dữ liệu đi** | Worker chủ động poll outbox trong DB. C4 nhận kết quả ACKED. C7 chạy khi bật gửi Central và có thể gửi lại. |
 | C5 | Liền · Gọi Java trong process | Attendance worker chuyển `AttendanceEvent` cho consumer. |
-| C6 | Đậm, không mũi tên · JDBC | Attendance là caller. Consumer áp dụng eligibility rồi ghi bảng riêng trong H2. |
+| C6 | Đậm, không mũi tên · JDBC | Attendance là caller. Consumer áp dụng eligibility rồi ghi bảng riêng trong DB. |
 | C8 | Liền · HTTP request/response trong worker | Worker POST batch tới `/edge/v1/sync`. Receiver chống trùng theo `eventId`. Việc gửi diễn ra ngoài request C1. |
 
 Ở đường liền hoặc đậm có mũi tên, chiều đi từ bên **khởi tạo request/gọi hàm** sang bên đáp ứng. C&C ghi topology và các connector. Sequence bên dưới mô tả thứ tự của một lần quét.
@@ -257,7 +259,7 @@ flowchart LR
 sequenceDiagram
     participant S as Trạm quét đã đăng nhập
     participant E as Access tại Edge
-    participant D as H2 cục bộ
+    participant D as DB của Edge
     participant G as Adapter chấm công
     participant A as Attendance worker
     participant T as Attendance
@@ -287,7 +289,7 @@ sequenceDiagram
 
 </details>
 
-**Biến thể và lý do.** H2 và adapter chấm công chạy trên Edge. Outbox ghi chấm công ngoài đường quét. Trong cấu hình kiến trúc nhiều Edge, worker gửi Central có thể được bật riêng. API, health và luồng tích hợp được mô tả trong runbook. [Runbook backend](backend/README.md)
+**Biến thể và lý do.** Bản nộp chạy PostgreSQL cùng Edge. Các profile kiểm thử có thể dùng H2 nhúng. Outbox ghi chấm công ngoài đường quét. Trong cấu hình kiến trúc nhiều Edge, worker gửi Central có thể được bật riêng. API, health và luồng tích hợp được mô tả trong runbook. [Runbook backend](backend/README.md)
 
 - **Scan và retry.** Edge xác thực trạm, kiểm tra scope rồi tra idempotency. Retry cùng `eventId` và cùng fingerprint có thể nhận `409 REQUEST_IN_PROGRESS` hoặc kết quả đã lưu. Một JTI được dùng một lần trong mỗi site. Central phát hiện dùng lại giữa site sau khi đồng bộ.
 - **Giao dịch trước lệnh cổng.** Nếu transaction ghi `SENT` lỗi, Edge từ chối, JTI được rollback và lệnh chưa được gửi. Sau khi gửi, timeout tạo `UNKNOWN`. Worker truy vấn trạng thái theo ID thay cho việc gửi lại lệnh.
@@ -309,13 +311,13 @@ flowchart LR
       UI["«artifact» React console"]
     end
     subgraph BE["«env» JVM 21 / Docker"]
-      J["«artifact» qr-attendance-edge-1.0.0.jar :8084"]
+      J["«artifact» qr-attendance-edge-1.0.0.jar :8085"]
     end
     subgraph Disk["«storage» Đĩa host"]
-      F["«data» H2 tmc-edge.mv.db"]
+      F["«data» PostgreSQL tmc_attendance"]
     end
     B ---|loopback 5173| FE
-    B ---|proxy loopback 8084| BE
+    B ---|proxy loopback 8085| BE
     BE ---|file path hoặc volume mount| Disk
   end
 ```
@@ -323,10 +325,10 @@ flowchart LR
 | Phần tử môi trường | Phần mềm được đặt ở đó | Biến thể và ràng buộc |
 | --- | --- | --- |
 | Máy chạy hệ thống và trình duyệt | React và Node.js phục vụ Vite | Frontend nghe cổng 5173, gọi Edge qua proxy cùng origin. |
-| JVM hoặc container | Edge API, adapter chấm công, Attendance và các worker. | Chạy Maven Wrapper, JAR hoặc Docker Compose. Compose publish cổng 8084 trên loopback. |
-| Đĩa host | File dữ liệu H2, outbox và attendance | Maven dùng `backend/data/`. Docker lưu vào named volume `edge-data`. |
+| JVM hoặc container | Edge API, adapter chấm công, Attendance và các worker. | Chạy Maven Wrapper, JAR hoặc Docker Compose. Compose publish cổng 8085 trên loopback. |
+| Volume Docker | PostgreSQL, outbox và attendance | Compose dùng volume `postgres-data`. H2 dạng tệp dùng cho cấu hình cũ và kiểm thử. |
 
-**Liên hệ giữa ba view.** `tmc.access` tạo instance `edge` và adapter ghi công. Các instance chạy từ JAR trong JVM hoặc container. Bản nộp dùng tài khoản và H2 trên một Edge. Phân bố vật lý hai nhà máy thuộc thiết kế Phase 1. [Bình Dương, Long An và Central](Phase1_Architecture.md#6-allocation-view)
+**Liên hệ giữa ba view.** `tmc.access` tạo instance `edge` và adapter ghi công. Các instance chạy từ JAR trong JVM hoặc container. Bản nộp dùng tài khoản và PostgreSQL trên một Edge. Phân bố vật lý hai nhà máy thuộc thiết kế Phase 1. [Bình Dương, Long An và Central](Phase1_Architecture.md#6-allocation-view)
 
 ## SOLID
 
@@ -375,7 +377,7 @@ Phase 0–1 dùng `EDGE_VERIFY` và `STRICT` để mô tả cách vận hành kh
 | Task 2 · nghiệp vụ chính | Access xác minh tại Edge, cấp QR theo phiên, quản trị tài khoản và trạm, ghi công và xuất báo cáo. | Tích hợp cổng vật lý, đồng bộ nhiều Edge có xác thực và override offline hai người thuộc phạm vi thiết kế. |
 | Pipeline và trạng thái | Các bước xác thực, chữ ký/thời gian, credential, policy, replay, anti-passback, transaction, lệnh và outcome. Ba trạng thái được giữ riêng. | Scope của trạm được kiểm tra trước khi trả một kết quả idempotent. Idempotency nằm trong use case. Passage là endpoint riêng và không nằm trên đường gửi lệnh. |
 | Port và contract | Wiring ở bootstrap. Attendance nhận `AttendanceEvent` và ghi bảng riêng. Edge và Central dùng `EdgeSyncEvent`. | UserQr dùng các port credential/token của Access và Attendance dùng policy/scope ports của Access. Sync ánh xạ DTO sang `AccessAttempt` ở bộ nhận. Ranh giới giữa các module chưa đạt quy tắc tuyệt đối chỉ import từ package `contract`. |
-| Runtime và tích hợp | Java 21, giao dịch H2, outbox, QR ES256, JWT phiên, quyền từ DB và cấu hình snapshot. | Bản nộp chạy một Edge với adapter chấm công phần mềm. Đồng bộ nhiều Edge, cổng vật lý và QR ký bằng khóa trên thiết bị thuộc phạm vi tích hợp. |
+| Runtime và tích hợp | Java 21, giao dịch PostgreSQL hoặc H2, outbox, QR ES256, JWT phiên, quyền từ DB và cấu hình snapshot. | Bản nộp chạy một Edge với adapter chấm công phần mềm. Đồng bộ nhiều Edge, cổng vật lý và QR ký bằng khóa trên thiết bị thuộc phạm vi tích hợp. |
 | Mức bao phủ test | Test riêng cho cả 10 step, contract, HTTP với H2, fault injection cho outbox và ArchUnit. | Load harness dùng Node.js. Bộ test dùng dữ liệu và cấu hình demo. |
 
 ### Đối chiếu AC trong Phần I
@@ -383,9 +385,9 @@ Phase 0–1 dùng `EDGE_VERIFY` và `STRICT` để mô tả cách vận hành kh
 | AC | Bằng chứng đang có | Việc còn thiếu để nghiệm thu |
 | --- | --- | --- |
 | AC-01 · QR và từ chối | Test riêng kiểm tra chữ ký ES256, `kid`, issuer/audience, biên thời gian, credential và thiết bị, station scope, snapshot, replay, anti-passback và lỗi lưu. `EdgeFlowTest` xác nhận không phát lệnh khi lưu thất bại. | Chạy ma trận QR/credential với dữ liệu và policy TMC duyệt. |
-| AC-02 · lệnh cổng và passage | `GateCommandSenderContractTest`, `AccessAttemptTest` và `EdgeFlowTest` kiểm tra outcome riêng với passage. | Kiểm thử theo API và nguồn cảm biến thực. |
+| AC-02 · lệnh cổng và passage | Các bài kiểm thử cổng xác minh trạng thái lệnh và passage riêng biệt. `GateIncidentFlowTest` kiểm tra hết hạn, quét lại và đối soát có audit. | Kiểm thử theo API và nguồn cảm biến thực. |
 | AC-03 · Attendance Transaction | `EdgeFlowTest` kiểm tra ghi bản ghi và cờ HR review. `AttendanceEligibilityTest` kiểm tra ACKED-only. | Test từng trường employee, site, time, direction và evidence theo schema được duyệt. |
-| AC-04 · độ bền dữ liệu | `EdgeFlowTest` ép lỗi insert outbox, kiểm tra JTI rollback và không phát lệnh. | Khởi động lại Edge/Central và đối soát số liệu theo định nghĩa normal operation. |
+| AC-04 · độ bền dữ liệu | `EdgeFlowTest` ép lỗi insert outbox, kiểm tra JTI rollback và không phát lệnh. | Central lưu kết quả và bảo vệ replay trong DB. Nghiệm thu tại nơi triển khai cần đối soát dữ liệu qua lần khởi động lại toàn hệ thống. |
 | AC-05 · idempotency | `EdgeFlowTest` kiểm tra replay kết quả cũ, hai request đồng thời dùng một JTI và HTTP 409 `REQUEST_IN_PROGRESS` có thể thử lại. `VerificationPipelineTest` kiểm tra trạng thái in-progress trong lúc gửi lệnh và việc gửi lệnh một lần khi retry sau timeout. | Kiểm thử quy tắc retry trên thiết bị thật. |
 | AC-06 · thời gian kiosk | [Đo tải local](backend/README.md) thực hiện 800 scan/site với hai site đồng thời trong 30 giây, chậm nhất 74,55 ms ở ranh giới HTTP Edge. | Chạy kịch bản chính thức 30 phút tại từng site và đo tới kiosk với LAN/Turnstile thật. |
 | AC-07 · gửi HR trước 12:00 ngày 1 | `EdgeFlowTest` dùng clock cố định, xác nhận batch tháng chỉ tạo một lần và lưu ACK mô phỏng trước trưa. | Schema, calendar, delivery ACK và đối soát với HR/Payroll thật. |

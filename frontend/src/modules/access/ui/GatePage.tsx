@@ -12,6 +12,7 @@ import { parseScanToken } from "../lib/scan-token";
 import { readQrFile } from "../lib/read-qr";
 import type { VerifyPayload, VerifyResult } from "../model/types";
 import { QrCamera } from "./QrCamera";
+import { GateIncidentQueue } from "./GateIncidentQueue";
 import { StationCodePanel } from "./StationCodePanel";
 
 const reasons: Record<string, string> = {
@@ -26,6 +27,7 @@ const reasons: Record<string, string> = {
   STATION_SCOPE: "Nhân viên không thuộc nhà máy này.",
   STATION_AUTH_FAILED: "Trạm quét hiện không hoạt động.",
   INVALID_TOKEN: "Mã QR không hợp lệ.",
+  COMMAND_PENDING: "Lượt trước đang chờ xác nhận cổng.",
   SHIFT_COMPLETED: "Ngày công của nhân viên đã kết thúc.",
 };
 
@@ -43,7 +45,12 @@ function scanLabel(result: VerifyResult, direction: "ENTRY" | "EXIT") {
       "Lượt quét bị từ chối. Liên hệ quản trị viên nếu cần hỗ trợ."
     );
   }
-  if (result.command !== "ACKED") return "Chưa thể ghi nhận lượt quét.";
+  if (result.evidence === "MANUAL_NO_PASSAGE") return "Nhân sự xác nhận lượt này chưa qua cổng.";
+  if (result.command === "EXPIRED" && result.evidence !== "MANUAL_PASSAGE") {
+    return "Lượt cổng đã chuyển cho Nhân sự đối soát. Có thể quét mã mới.";
+  }
+  if (result.command !== "ACKED" && result.evidence !== "MANUAL_PASSAGE")
+    return "Chưa thể ghi nhận lượt quét.";
   if (result.attendanceGate === false)
     return `${result.employeeName ?? "Nhân viên"} được phép vào khu vực`;
   const time = displayTime(result.scannedAt ?? null);
@@ -165,6 +172,7 @@ function AssignedStation({
           Hiện QR cho nhân viên quét
         </button>
       )}
+      {!linkedCode && <GateIncidentQueue />}
       <StationScanner
         key={station.stationId}
         station={station}
@@ -199,7 +207,9 @@ function StationScanner({
   const retry = useRef<(() => void) | null>(null);
   const direction = station.gate.directions[0] ?? "ENTRY";
   const canStream = Boolean(globalThis.isSecureContext && navigator.mediaDevices?.getUserMedia);
-  const good = result?.decision === "ALLOW" && result.command === "ACKED";
+  const good =
+    result?.decision === "ALLOW" &&
+    (result.command === "ACKED" || result.evidence === "MANUAL_PASSAGE");
 
   useEffect(() => {
     if (!pending) return;

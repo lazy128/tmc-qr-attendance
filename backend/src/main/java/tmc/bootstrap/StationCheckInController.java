@@ -9,7 +9,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -20,6 +24,7 @@ import tmc.access.application.VerifyAccessUseCase;
 import tmc.access.domain.AccessAttempt;
 import tmc.access.domain.AccessRequest;
 import tmc.access.domain.AccessStates.Reason;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.Direction;
 import tmc.access.domain.EventId;
 import tmc.access.domain.SiteId;
@@ -34,6 +39,7 @@ import tmc.attendance.application.TimesheetCalculator;
 import tmc.shared.StaffDirectory;
 import tmc.shared.WorkplaceSites;
 import tmc.shared.auth.StationQrTokens;
+import tmc.shared.audit.AuditWriter;
 import tmc.shared.auth.WorkplaceAccounts;
 import tmc.shared.auth.WorkplaceAccounts.Account;
 import tmc.shared.auth.WorkplaceAccounts.Role;
@@ -54,10 +60,12 @@ public class StationCheckInController {
   private final AttemptStore attempts;
   private final ClockProvider clock;
   private final TimesheetCalculator calculator;
+  private final JdbcTemplate jdbc;
+  private final AuditWriter audit;
 
   public StationCheckInController(WorkplaceAccounts accounts, JdbcStationRegistry stations, StationQrTokens stationQr,
       CredentialReader credentials, IssueQrToken employeeQr, TokenValidator tokens, VerifyAccessUseCase verify,
-      AttemptStore attempts, ClockProvider clock, TimesheetCalculator calculator) {
+      AttemptStore attempts, ClockProvider clock, TimesheetCalculator calculator, JdbcTemplate jdbc, AuditWriter audit) {
     this.accounts = accounts;
     this.stations = stations;
     this.stationQr = stationQr;
@@ -68,8 +76,11 @@ public class StationCheckInController {
     this.attempts = attempts;
     this.clock = clock;
     this.calculator = calculator;
+    this.jdbc = jdbc;
+    this.audit = audit;
   }
 
+  @Transactional
   @PostMapping("/workplace/v1/stations/{stationId}/qr/{direction}")
   public ResponseEntity<?> code(@PathVariable String stationId, @PathVariable Direction direction,
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth) {
@@ -81,14 +92,26 @@ public class StationCheckInController {
     if (station == null) {
       return error(HttpStatus.CONFLICT, "STATION_UNAVAILABLE", "Cổng chấm công này đang tắt hoặc không hỗ trợ hướng đã chọn.", false);
     }
-    var issued = stationQr.issue(station.stationId(), station.siteId(), direction.name(), clock.now());
+    jdbc.queryForObject("SELECT username FROM workplace_account WHERE username=? FOR UPDATE", String.class, account.username());
+    active(auth);
+    var now = clock.now();
+    long recent = jdbc.queryForObject("""
+        SELECT COUNT(*) FROM edge_audit WHERE actor=? AND action='STATION_QR_ISSUED' AND occurred_at>?
+        """, Long.class, account.username(), now.minusSeconds(60).atOffset(java.time.ZoneOffset.UTC));
+    if (recent >= 30) {
+      return error(HttpStatus.TOO_MANY_REQUESTS, "STATION_QR_RATE_LIMIT", "Cổng đang làm mới mã quá thường xuyên. Hãy thử lại sau.", true);
+    }
+    var issued = stationQr.issue(station.stationId(), station.siteId(), direction.name(), now);
+    audit.append(account.username(), "STATION_QR_ISSUED", stationId + "/" + direction.name(), "SUCCESS",
+        CorrelationIdFilter.currentId(), now);
     return ok(issued);
   }
 
   @PostMapping("/workplace/v1/me/check-in")
   public ResponseEntity<?> checkIn(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-      @RequestBody Scan body) {
+      @CookieValue(value = WorkplaceController.DEVICE_COOKIE, required = false) String device, @RequestBody Scan body) {
     var employee = employee(auth);
+    if (!accounts.trustedDevice(auth, device)) return untrusted();
     var now = clock.now();
     var proof = stationQr.verify(body.code(), now).orElse(null);
     if (proof == null) return error(HttpStatus.BAD_REQUEST, "INVALID_STATION_QR", "Hãy quét mã QR tại cổng chấm công.", false);
@@ -111,13 +134,22 @@ public class StationCheckInController {
     var credential = accounts.credentialId(employee.id()).flatMap(credentials::getCredential).orElseThrow();
     if (!credential.active()) return error(HttpStatus.FORBIDDEN, "REVOKED", "Thông tin chấm công đã bị thu hồi.", false);
     var issued = employeeQr.issue(credential.id(), credential.deviceHash());
-    return record(auth, station, direction, now, eventId, scanId, issued.token(), credential.deviceHash());
+    return record(auth, station, direction, now, eventId, scanId, issued.token(), credential.deviceHash(), Channel.STATION_QR);
   }
 
-  @PostMapping("/workplace/v1/me/check-in/personal")
-  public ResponseEntity<?> personalCheckIn(
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth, @RequestBody Scan body) {
+  @GetMapping("/workplace/v1/me/check-in/status/{id}")
+  ResponseEntity<?> checkInStatus(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+      @CookieValue(value = WorkplaceController.DEVICE_COOKIE, required = false) String device, @PathVariable String id) {
     var employee = employee(auth);
+    if (!accounts.trustedDevice(auth, device)) return untrusted();
+    return attempts.findAttempt(id).filter(attempt -> attempt.channel() != Channel.GATE_SCAN
+        && employee.id().equals(attempt.employeeId())).map(this::response)
+        .orElseGet(() -> ResponseEntity.notFound().build());
+  }
+
+  ResponseEntity<?> personalCheckIn(String auth, String device, Scan body) {
+    var employee = employee(auth);
+    if (!accounts.trustedDevice(auth, device)) return untrusted();
     var now = clock.now();
     var claims = personalClaims(body.code());
     if (claims == null) {
@@ -134,7 +166,7 @@ public class StationCheckInController {
     if (!claims.expiresAt().isAfter(now)) {
       return error(HttpStatus.CONFLICT, "TOKEN_EXPIRED", "Mã QR đã hết hạn. Quét mã mới đang hiển thị trên máy tính.", false);
     }
-    if (!calculator.workDate(claims.issuedAt()).equals(calculator.workDate(now))) {
+    if (!calculator.workDateFor(employee.id(), claims.issuedAt()).equals(calculator.workDateFor(employee.id(), now))) {
       return error(HttpStatus.CONFLICT, "TOKEN_EXPIRED", "Ca mới đã bắt đầu. Hãy quét mã mới trên máy tính.", false);
     }
     if (!credential.active() || credential.version() != claims.version()
@@ -149,14 +181,14 @@ public class StationCheckInController {
     if (station == null) {
       return error(HttpStatus.CONFLICT, "STATION_UNAVAILABLE", "Cổng chấm công của cơ sở đang tạm ngưng theo hướng này.", false);
     }
-    return record(auth, station, direction, now, eventId, scanId, body.code(), credential.deviceHash());
+    return record(auth, station, direction, now, eventId, scanId, body.code(), credential.deviceHash(), Channel.PERSONAL_SELF);
   }
 
   private Claims personalClaims(String code) {
     if (code == null || code.isBlank() || code.length() > 4096) return null;
     try {
       var claims = tokens.validate(code);
-      return "tmc".equals(claims.issuer()) && "tmc-gates".equals(claims.audience()) ? claims : null;
+      return "tmc".equals(claims.issuer()) && Channel.PERSONAL_AUDIENCE.equals(claims.audience()) ? claims : null;
     } catch (IllegalArgumentException invalid) {
       return null;
     }
@@ -167,13 +199,13 @@ public class StationCheckInController {
   }
 
   private ResponseEntity<?> record(String auth, Station station, Direction direction, Instant now,
-      String eventId, String scanId, String token, String deviceHash) {
+      String eventId, String scanId, String token, String deviceHash, Channel channel) {
     active(auth);
     // Match the database timestamp precision so the first response and a retry agree.
     Instant scannedAt = now.truncatedTo(ChronoUnit.MICROS);
     var request = new AccessRequest(new EventId(eventId), CorrelationIdFilter.currentId(),
         new SiteId(station.siteId()), new StationId(station.stationId()), direction, scannedAt,
-        token, deviceHash, scannedAt, scanId);
+        token, deviceHash, scannedAt, scanId, channel);
     var result = verify.execute(request);
     if (result.inProgress()) {
       return error(HttpStatus.CONFLICT, "REQUEST_IN_PROGRESS", "Đang xử lý lượt chấm công.", true);
@@ -205,8 +237,12 @@ public class StationCheckInController {
   }
 
   private ResponseEntity<?> response(AccessAttempt attempt) {
-    return ok(new Result(attempt.direction().name(), attempt.decision().name(),
-        attempt.reasonCode() == null ? null : attempt.reasonCode().name(), attempt.command().name(), attempt.scannedAt()));
+    return ok(new Result(attempt.eventId().value(), attempt.direction().name(), attempt.decision().name(),
+        attempt.reasonCode() == null ? null : attempt.reasonCode().name(), attempt.command().name(), attempt.evidence() == null ? null : attempt.evidence().name(), attempt.scannedAt()));
+  }
+
+  private static ResponseEntity<ApiError> untrusted() {
+    return error(HttpStatus.FORBIDDEN, "DEVICE_NOT_TRUSTED", "Hãy duyệt trình duyệt này từ thiết bị tin cậy hoặc nhờ Nhân sự duyệt.", false);
   }
 
   private static ResponseEntity<?> ok(Object body) {
@@ -219,5 +255,5 @@ public class StationCheckInController {
   }
 
   public record Scan(String code) {}
-  public record Result(String direction, String decision, String reasonCode, String command, Instant scannedAt) {}
+  public record Result(String eventId, String direction, String decision, String reasonCode, String command, String evidence, Instant scannedAt) {}
 }

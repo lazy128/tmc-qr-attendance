@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   const key = env["TMC_DEV_HTTPS_KEY"];
   if (Boolean(cert) !== Boolean(key))
     throw new Error("Set both TMC_DEV_HTTPS_CERT and TMC_DEV_HTTPS_KEY.");
-  const target = env["TMC_DEV_PROXY_TARGET"] || "http://127.0.0.1:8084";
+  const target = env["TMC_DEV_PROXY_TARGET"] || "http://127.0.0.1:8085";
   const server: ServerOptions = {};
   if (cert && key) {
     server.https = { cert: readFileSync(cert), key: readFileSync(key) };

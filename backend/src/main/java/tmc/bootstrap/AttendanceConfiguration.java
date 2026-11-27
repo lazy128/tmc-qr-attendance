@@ -1,6 +1,8 @@
 package tmc.bootstrap;
 
+import java.time.Duration;
 import java.time.LocalTime;
+import java.util.Map;
 import java.time.ZoneId;
 import java.nio.file.Path;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +22,8 @@ import tmc.attendance.infrastructure.XlsxTimesheetSink;
 import tmc.attendance.infrastructure.GoogleSheetsTimesheetSink;
 import tmc.shared.audit.AuditWriter;
 import tmc.shared.EmployeeDirectory;
+import tmc.shared.ShiftCalendar;
+import tmc.shared.ShiftCalendar.Shift;
 
 @Configuration
 public class AttendanceConfiguration {
@@ -34,9 +38,23 @@ public class AttendanceConfiguration {
   }
 
   @Bean
-  TimesheetCalculator timesheetCalculator(EmployeeDirectory employees, @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
-      @Value("${tmc.timesheet.day-start:06:00}") String dayStart) {
-    return new TimesheetCalculator(ZoneId.of(zone), LocalTime.parse(dayStart), employees);
+  ShiftCalendar shiftCalendar(EmployeeDirectory employees, @Value("${tmc.hr.zone:Asia/Ho_Chi_Minh}") String zone,
+      @Value("${tmc.timesheet.day-start:06:00}") String dayStart,
+      @Value("${tmc.access.shift-grace-minutes:10}") long early,
+      @Value("${tmc.access.shift-late-grace-minutes:30}") long late,
+      @Value("${tmc.access.shift.standard-open:06:00}") String standardOpen,
+      @Value("${tmc.access.shift.standard-close:19:00}") String standardClose,
+      @Value("${tmc.access.shift.night-open:20:00}") String nightOpen,
+      @Value("${tmc.access.shift.night-close:06:00}") String nightClose) {
+    return new ShiftCalendar(ZoneId.of(zone), LocalTime.parse(dayStart), employees, Map.of(
+        "STANDARD", new Shift(LocalTime.parse(standardOpen), LocalTime.parse(standardClose)),
+        "NIGHT", new Shift(LocalTime.parse(nightOpen), LocalTime.parse(nightClose))),
+        Duration.ofMinutes(early), Duration.ofMinutes(late));
+  }
+
+  @Bean
+  TimesheetCalculator timesheetCalculator(EmployeeDirectory employees, ShiftCalendar calendar) {
+    return new TimesheetCalculator(calendar, employees);
   }
 
   @Bean

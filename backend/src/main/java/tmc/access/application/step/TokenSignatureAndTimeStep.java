@@ -5,6 +5,7 @@ import tmc.access.application.AccessContext;
 import tmc.access.application.StepResult;
 import tmc.access.application.VerificationStep;
 import tmc.access.domain.AccessRequest;
+import tmc.access.domain.AccessStates.Channel;
 import tmc.access.domain.AccessStates.Reason;
 import tmc.access.domain.port.TokenValidator;
 import tmc.shared.clock.ClockProvider;
@@ -45,7 +46,9 @@ public final class TokenSignatureAndTimeStep implements VerificationStep {
     try {
       var claims = validator.validate(request.token());
       context.claims = claims;
-      if (!expectedIssuer.equals(claims.issuer()) || !expectedAudience.equals(claims.audience())) {
+      String audience = request.channel() == Channel.PERSONAL_SELF ? Channel.PERSONAL_AUDIENCE : expectedAudience;
+      if (!expectedIssuer.equals(claims.issuer()) || !audience.equals(claims.audience())
+          || (request.channel() != Channel.PERSONAL_SELF && claims.attendanceDirection() != null)) {
         return StepResult.deny(Reason.INVALID_TOKEN);
       }
       var now = clock.now();

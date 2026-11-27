@@ -7,5 +7,9 @@ public interface VerificationStep {
 
   String name();
 
+  default boolean applies(AccessRequest request) {
+    return true;
+  }
+
   StepResult execute(AccessRequest request, AccessContext context);
 }

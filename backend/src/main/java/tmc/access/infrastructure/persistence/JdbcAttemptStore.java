@@ -14,6 +14,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tmc.access.domain.AccessAttempt;
 import tmc.access.domain.CredentialChangedException;
 import tmc.access.domain.AccessStates.Reason;
+import tmc.access.domain.AccessStates.Channel;
+import tmc.access.domain.AccessStates.Evidence;
 import tmc.access.domain.AntiPassbackException;
 import tmc.access.domain.AccessStates.Command;
 import tmc.access.domain.AccessStates.Passage;
@@ -33,8 +35,8 @@ public final class JdbcAttemptStore
       INSERT INTO access_attempt(
         event_id, correlation_id, employee_id, site_id, station_id, direction, scanned_at, received_at,
         credential_id, credential_version, jti, decision, reason_code, command_state, passage_state,
-        offline_accepted, evidence, suspicious, attendance_gate
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        offline_accepted, evidence, suspicious, attendance_gate, channel
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       """;
 
   private final JdbcTemplate jdbc;
@@ -71,13 +73,12 @@ public final class JdbcAttemptStore
         } catch (DuplicateKeyException duplicate) {
           throw new ReplayDetectedException();
         }
-        boolean pendingCommand = attempt.attendanceGate() && Boolean.TRUE.equals(jdbc.queryForObject("""
-            SELECT EXISTS (SELECT 1 FROM access_attempt
-              WHERE site_id=? AND employee_id=? AND attendance_gate=TRUE AND command_state IN ('SENT','UNKNOWN'))
-            """, Boolean.class, attempt.siteId().value(), attempt.employeeId()));
-        if (attempt.attendanceGate()) {
-          if (pendingCommand) throw new AntiPassbackException();
-          var denial = presence.denial(attempt.siteId().value(), attempt.employeeId(),
+        boolean selfReported = attempt.channel() == Channel.PERSONAL_SELF;
+        if (attempt.attendanceGate() && !selfReported) {
+          if (presence.pendingCommand(attempt.siteId().value(), attempt.employeeId())) {
+            throw new AntiPassbackException(Reason.COMMAND_PENDING);
+          }
+          var denial = presence.presenceDenial(attempt.siteId().value(), attempt.employeeId(),
               attempt.direction(), attempt.scannedAt());
           if (denial != null) throw new AntiPassbackException(denial);
         }
@@ -87,6 +88,7 @@ public final class JdbcAttemptStore
             attempt.eventId().value(),
             outboxCodec.encode(attempt), attempt.attendanceGate() ? "PENDING" : "SKIPPED"
         );
+        if (selfReported) complete(attempt.eventId().value(), attempt);
         appendAuditRow("station", "ACCESS_ALLOW", attempt.eventId().value(), "ALLOW", attempt.correlationId(), attempt.receivedAt());
       });
     } catch (ReplayDetectedException replay) {
@@ -124,7 +126,8 @@ public final class JdbcAttemptStore
   public void update(AccessAttempt attempt) {
     tx.executeWithoutResult(status -> {
       var current = lockAttempt(attempt.eventId().value());
-      if (attempt.passage() == Passage.CONFIRMED && current.passage() != Passage.CONFIRMED) {
+      if (current.command() != Command.EXPIRED && attempt.passage() == Passage.CONFIRMED
+          && current.passage() != Passage.CONFIRMED) {
         writeOutcome(current.withPassage());
         if (current.attendanceGate()) {
           presence.confirmed(current.siteId().value(), current.employeeId(), current.direction(), current.eventId().value());
@@ -135,10 +138,19 @@ public final class JdbcAttemptStore
 
   @Override
   public void recordOutcome(AccessAttempt attempt) {
+    recordOutcome(attempt, null);
+  }
+
+  public void expireCommand(AccessAttempt attempt, Instant now) {
+    recordOutcome(attempt.withCommand(Command.EXPIRED), now);
+  }
+
+  private void recordOutcome(AccessAttempt attempt, Instant expiredAt) {
     tx.executeWithoutResult(status -> {
       var current = lockAttempt(attempt.eventId().value());
       if (current.command() == attempt.command()
-          || current.command() == Command.ACKED || current.command() == Command.FAILED) return;
+          || current.command() == Command.ACKED || current.command() == Command.FAILED
+          || current.command() == Command.EXPIRED) return;
       var next = current.withCommand(attempt.command());
       if (next.command() == Command.ACKED && next.attendanceGate()) {
         presence.acknowledged(next.siteId().value(), next.employeeId(), next.direction(), next.eventId().value());
@@ -148,6 +160,10 @@ public final class JdbcAttemptStore
       }
       writeOutcome(next);
       complete(next.eventId().value(), next);
+      if (expiredAt != null) {
+        appendAuditRow("system", "GATE_COMMAND_EXPIRED", next.eventId().value(), "REVIEW_PENDING",
+            next.correlationId(), expiredAt);
+      }
     });
   }
 
@@ -175,8 +191,9 @@ public final class JdbcAttemptStore
     }
     jdbc.update(
         "UPDATE edge_outbox SET payload=?, central_status='PENDING', attendance_status="
-            + "CASE WHEN attendance_status='SKIPPED' THEN 'SKIPPED' ELSE 'PENDING' END WHERE event_id=?",
-        outboxCodec.encode(attempt), attempt.eventId().value()
+            + "CASE WHEN ? THEN 'PENDING' WHEN ? OR attendance_status='SKIPPED' THEN 'SKIPPED' ELSE 'PENDING' END WHERE event_id=?",
+        outboxCodec.encode(attempt), attempt.evidence() == Evidence.MANUAL_PASSAGE && attempt.attendanceGate(),
+        attempt.command() == Command.EXPIRED, attempt.eventId().value()
     );
   }
 
@@ -234,7 +251,7 @@ public final class JdbcAttemptStore
     return jdbc.query(
             "SELECT o.event_id FROM edge_outbox o JOIN access_attempt a ON a.event_id=o.event_id "
                 + "WHERE o.attendance_status='PENDING' AND a.attendance_gate=TRUE "
-                + "AND (a.command_state='ACKED' OR a.reason_code IN ('REPLAY','ANTI_PASSBACK')) "
+                + "AND (a.command_state='ACKED' OR a.evidence IN ('SELF_REPORTED','MANUAL_PASSAGE') OR a.reason_code IN ('REPLAY','ANTI_PASSBACK')) "
                 + "ORDER BY o.created_at LIMIT ?",
             (rs, row) -> rs.getString(1),
             limit
@@ -247,20 +264,61 @@ public final class JdbcAttemptStore
   public long pendingOutboxDepth(boolean centralEnabled) {
     return jdbc.queryForObject("""
         SELECT COUNT(*) FROM edge_outbox o JOIN access_attempt a ON a.event_id=o.event_id
-        WHERE (o.attendance_status='PENDING' AND a.command_state IN ('SENT','UNKNOWN','ACKED'))
+        WHERE (o.attendance_status='PENDING' AND (a.command_state IN ('SENT','UNKNOWN','ACKED') OR a.evidence IN ('SELF_REPORTED','MANUAL_PASSAGE')))
            OR (? AND o.central_status='PENDING')
         """, Long.class, centralEnabled);
   }
 
-  public List<AccessAttempt> unknownCommands(int limit) {
-    return jdbc.query(
-            "SELECT event_id FROM access_attempt WHERE command_state='UNKNOWN' OR (command_state='SENT' AND received_at < DATEADD('SECOND', -2, CURRENT_TIMESTAMP)) ORDER BY received_at LIMIT ?",
-            (rs, row) -> rs.getString(1),
-            limit
-        ).stream()
-        .map(id -> findAttempt(id).orElse(null))
-        .filter(Objects::nonNull)
-        .toList();
+  public List<AccessAttempt> pendingCommands(Instant sentBefore, int limit) {
+    return jdbc.query("""
+        SELECT * FROM access_attempt
+        WHERE received_at IS NOT NULL AND (command_state='UNKNOWN' OR (command_state='SENT' AND received_at<=?))
+        ORDER BY received_at,event_id LIMIT ?
+        """, (rs, row) -> AccessAttemptMapper.fromRow(rs), AccessAttemptMapper.timestamp(sentBefore), limit);
+  }
+
+  public List<AccessAttempt> gateIncidents(String station) {
+    return jdbc.query("""
+        SELECT a.* FROM access_attempt a WHERE a.command_state='EXPIRED'
+        AND (CAST(? AS VARCHAR(100)) IS NULL OR a.station_id=?)
+        AND NOT EXISTS (SELECT 1 FROM gate_incident_review r WHERE r.event_id=a.event_id)
+        ORDER BY a.received_at,a.event_id LIMIT 100
+        """, (rs, row) -> AccessAttemptMapper.fromRow(rs), station, station);
+  }
+
+  public boolean reviewGateIncident(String eventId, boolean passed, String note, String actor,
+      String correlation, Instant now) {
+    return Boolean.TRUE.equals(tx.execute(status -> {
+      var observed = findAttempt(eventId).orElse(null);
+      if (observed == null || observed.command() != Command.EXPIRED) return false;
+      jdbc.query("SELECT credential_id FROM credential WHERE credential_id=? FOR UPDATE",
+          rs -> { return rs.next(); }, observed.credentialId());
+      var attempt = lockAttempt(eventId);
+      if (Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS (SELECT 1 FROM gate_incident_review WHERE event_id=?)
+          """, Boolean.class, eventId))) return false;
+      String outcome = passed ? "PASSAGE_CONFIRMED" : "NO_PASSAGE";
+      jdbc.update("""
+          INSERT INTO gate_incident_review(event_id,resolution,note,reviewer,reviewed_at) VALUES(?,?,?,?,?)
+          """, eventId, outcome, note, actor, AccessAttemptMapper.timestamp(now));
+      writeOutcome(attempt.withGateReview(passed));
+      if (passed && attempt.attendanceGate() && !attempt.suspicious() && !hasNewerPresence(attempt)) {
+        presence.manuallyConfirmed(attempt.siteId().value(), attempt.employeeId(), attempt.direction(), eventId);
+      }
+      appendAuditRow(actor, "GATE_INCIDENT_REVIEWED", eventId, outcome, correlation, now);
+      return true;
+    }));
+  }
+
+  private boolean hasNewerPresence(AccessAttempt attempt) {
+    return Boolean.TRUE.equals(jdbc.queryForObject("""
+        SELECT EXISTS (SELECT 1 FROM access_attempt WHERE site_id=? AND employee_id=? AND attendance_gate=TRUE
+          AND event_id<>? AND scanned_at>=? AND (command_state IN ('SENT','UNKNOWN','ACKED') OR evidence='MANUAL_PASSAGE'))
+        OR EXISTS (SELECT 1 FROM employee_presence WHERE site_id=? AND employee_id=?
+          AND evidence_quality='MANUAL_CORRECTION' AND updated_at>?)
+        """, Boolean.class, attempt.siteId().value(), attempt.employeeId(), attempt.eventId().value(),
+        AccessAttemptMapper.timestamp(attempt.scannedAt()), attempt.siteId().value(), attempt.employeeId(),
+        AccessAttemptMapper.timestamp(attempt.scannedAt())));
   }
 
   public void attendanceDone(AccessAttempt attempt) {
@@ -380,7 +438,7 @@ public final class JdbcAttemptStore
         attempt.passage().name(),
         attempt.offlineAccepted(),
         attempt.evidence() == null ? null : attempt.evidence().name(),
-        attempt.suspicious(), attempt.attendanceGate()
+        attempt.suspicious(), attempt.attendanceGate(), attempt.channel().name()
     );
   }
 

@@ -63,7 +63,7 @@ public final class VerifyAccessUseCase {
     }
     for (VerificationStep step : steps) {
       if (step.order() < 30) continue;
-      if (failure != null) {
+      if (failure != null || !step.applies(request)) {
         trace.add(step.name() + ":SKIPPED");
         continue;
       }
@@ -134,7 +134,8 @@ public final class VerifyAccessUseCase {
     return new AccessAttempt(
         request.eventId(),
         request.correlationId(),
-        reason == Reason.REPLAY || reason == Reason.ANTI_PASSBACK ? context.employeeId : null,
+        reason == Reason.REPLAY || reason == Reason.ANTI_PASSBACK || reason == Reason.COMMAND_PENDING
+            ? context.employeeId : null,
         request.siteId(),
         request.stationId(),
         request.direction(),
@@ -150,7 +151,8 @@ public final class VerifyAccessUseCase {
         false,
         null,
         false,
-        context.attendanceGate
+        context.attendanceGate,
+        request.channel()
     );
   }
 }

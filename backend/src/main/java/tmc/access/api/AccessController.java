@@ -132,7 +132,9 @@ public class AccessController {
   }
 
   private VerifyResponse response(AccessAttempt attempt, List<String> steps) {
-    String kiosk = attempt.command() == Command.UNKNOWN
+    String kiosk = attempt.command() == Command.EXPIRED
+        ? "Lượt cổng đã chuyển để Nhân sự đối soát"
+        : attempt.command() == Command.UNKNOWN
         ? "đang xác minh trạng thái cổng, chờ bảo vệ"
         : attempt.decision() == Decision.DENY
             ? attempt.reasonCode() == Reason.SNAPSHOT_STALE
@@ -151,7 +153,8 @@ public class AccessController {
         kiosk,
         CorrelationIdFilter.currentId(),
         steps,
-        attempt.decision() == Decision.ALLOW && attempt.command() == Command.ACKED
+        attempt.decision() == Decision.ALLOW && (attempt.command() == Command.ACKED
+            || attempt.evidence() == tmc.access.domain.AccessStates.Evidence.MANUAL_PASSAGE)
             ? employees.name(attempt.employeeId()) : null,
         attempt.scannedAt(),
         attempt.attendanceGate()
