@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,7 +27,9 @@ import tmc.access.domain.StationId;
 import tmc.access.domain.port.GateResult;
 import tmc.access.infrastructure.persistence.JdbcAttemptStore;
 import tmc.access.infrastructure.persistence.JdbcPresenceTracker;
+import tmc.access.infrastructure.persistence.JdbcPersonalCheckInQuota;
 import tmc.attendance.application.DefaultEligibilityPolicy;
+import tmc.attendance.application.TimesheetCalculator;
 import tmc.bootstrap.mapping.AccessToAttendance;
 import tmc.bootstrap.worker.CommandReconciliationWorker;
 
@@ -36,7 +40,8 @@ class GateIncidentFlowTest {
   private final JdbcTemplate jdbc = new JdbcTemplate(source);
   private final JdbcPresenceTracker presence = new JdbcPresenceTracker(jdbc, true);
   private final JdbcAttemptStore attempts = new JdbcAttemptStore(jdbc, new DataSourceTransactionManager(source),
-      Duration.ofMinutes(1), presence);
+      Duration.ofMinutes(1), presence,
+      new JdbcPersonalCheckInQuota(jdbc, new TimesheetCalculator(ZoneOffset.UTC, LocalTime.MIDNIGHT).calendar(), 4));
 
   GateIncidentFlowTest() {
     new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(source);

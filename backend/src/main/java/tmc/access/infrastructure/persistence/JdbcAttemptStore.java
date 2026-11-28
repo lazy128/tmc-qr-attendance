@@ -43,15 +43,18 @@ public final class JdbcAttemptStore
   private final TransactionTemplate tx;
   private final Duration reservationTtl;
   private final JdbcPresenceTracker presence;
+  private final JdbcPersonalCheckInQuota personalQuota;
   private final EdgeOutboxCodec outboxCodec = new EdgeOutboxCodec();
 
   public JdbcAttemptStore(
-      JdbcTemplate jdbc, PlatformTransactionManager manager, Duration reservationTtl, JdbcPresenceTracker presence
+      JdbcTemplate jdbc, PlatformTransactionManager manager, Duration reservationTtl, JdbcPresenceTracker presence,
+      JdbcPersonalCheckInQuota personalQuota
   ) {
     this.jdbc = jdbc;
     this.tx = new TransactionTemplate(manager);
     this.reservationTtl = reservationTtl;
     this.presence = presence;
+    this.personalQuota = personalQuota;
   }
 
   @Override
@@ -74,6 +77,9 @@ public final class JdbcAttemptStore
           throw new ReplayDetectedException();
         }
         boolean selfReported = attempt.channel() == Channel.PERSONAL_SELF;
+        if (selfReported) {
+          personalQuota.requireAvailable(attempt.employeeId(), attempt.scannedAt());
+        }
         if (attempt.attendanceGate() && !selfReported) {
           if (presence.pendingCommand(attempt.siteId().value(), attempt.employeeId())) {
             throw new AntiPassbackException(Reason.COMMAND_PENDING);

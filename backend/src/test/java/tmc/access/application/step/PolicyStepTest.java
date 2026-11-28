@@ -26,6 +26,18 @@ class PolicyStepTest {
     assertThat(step.execute(REQUEST, verifiedContext())).isEqualTo(StepResult.deny(Reason.SNAPSHOT_STALE));
   }
 
+  @Test
+  void futureSnapshotIsStaleWhenItExceedsFiveSecondsOfSkew() {
+    var snapshot = new MutableSnapshot(NOW.plusSeconds(5));
+    var step = new PolicyStep((claims, scan) -> true, snapshot, () -> NOW, MAX_AGE);
+    assertThat(snapshot.remainingAt(NOW, MAX_AGE)).isEqualTo(MAX_AGE);
+    assertThat(step.execute(REQUEST, verifiedContext())).isEqualTo(StepResult.ok());
+
+    snapshot.refresh(NOW.plusSeconds(5).plusNanos(1));
+    assertThat(snapshot.remainingAt(NOW, MAX_AGE).isNegative()).isTrue();
+    assertThat(step.execute(REQUEST, verifiedContext())).isEqualTo(StepResult.deny(Reason.SNAPSHOT_STALE));
+  }
+
   @ParameterizedTest
   @CsvSource({"true, true", "true, false", "false, true"})
   void requiresBothPoliciesAtTheFreshnessBoundary(boolean localAllows, boolean snapshotAllows) {

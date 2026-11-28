@@ -13,6 +13,7 @@ import tmc.access.domain.AccessStates.Evidence;
 import tmc.access.domain.AccessStates.Decision;
 import tmc.access.domain.AccessStates.Passage;
 import tmc.access.domain.AccessStates.Reason;
+import tmc.access.domain.PersonalSelfLimitException;
 import tmc.access.domain.ReplayDetectedException;
 import tmc.access.domain.port.AttemptStore;
 import tmc.shared.clock.ClockProvider;
@@ -69,6 +70,8 @@ public final class PersistAndConsumeStep implements VerificationStep {
       context.attempt = attempt;
       context.persisted = true;
       return StepResult.ok();
+    } catch (PersonalSelfLimitException limit) {
+      return StepResult.deny(Reason.PERSONAL_SELF_LIMIT);
     } catch (ReplayDetectedException replay) {
       return StepResult.deny(Reason.REPLAY);
     } catch (AntiPassbackException denied) {

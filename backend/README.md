@@ -16,6 +16,7 @@ Sao chép `.env.example` thành `.env`, điền thông tin bên dưới rồi ch
 | `TMC_TRUSTED_PROXY_IP` | IP proxy được phép chuyển địa chỉ máy khách cho lịch sử đăng nhập. Với Vite trên host và Compose publish loopback, lấy gateway bằng `docker network inspect tmc-attendance_default --format '{{(index .IPAM.Config 0).Gateway}}'`. |
 | `TMC_DB_NAME`, `TMC_DB_USERNAME`, `TMC_DB_PASSWORD`, `TMC_POSTGRES_PORT` | Tên DB, tài khoản, mật khẩu và cổng PostgreSQL trên host. Tên mặc định `tmc_attendance`, user `tmc`, cổng `55432`. |
 | `tmc.edge.site`, `tmc.edge.station` | Nhà máy mặc định là `SITE-BD`, với `BD-G01` và `BD-G01-OUT`. Long An có `LA-G01` và `LA-G01-OUT`. |
+| `tmc.checkin.personal-self.max-per-day` | Hạn mức tự khai, mặc định 4 lượt hợp lệ mỗi nhân viên mỗi ngày công khi profile tự khai được bật. |
 | `tmc.qr.ttl-seconds` | JWT bảo vệ và kiosk đọc có hiệu lực 30 giây. |
 | `tmc.qr.personal-link-ttl-seconds`, `tmc.checkin.personal-self.enabled` | Link tự khai có hiệu lực 60 giây và tính năng tắt mặc định. Bật cho DB kiểm thử qua profile `workplace,personal-self-demo`. |
 | `tmc.attendance.pairs-per-day` | Số cặp vào/ra tối đa mỗi ngày công. Mặc định 1. |
@@ -60,7 +61,7 @@ Mỗi dòng có khóa `employee_id` và `work_date`. `UPSERT` thay toàn bộ gi
 | `GET /workplace/v1/config` | Trả cờ tự khai cho giao diện. |
 | `POST /workplace/v1/stations/{id}/qr/{direction}` | Bảo vệ của trạm hoặc quản trị viên phát mã cổng 15 giây. Lưu audit `STATION_QR_ISSUED`, tối đa 30 lần/phút/tài khoản. |
 | `POST /workplace/v1/me/check-in` | Xác thực thiết bị đã duyệt, chi nhánh và mã đã ký tại cổng. Lưu kênh `STATION_QR`. |
-| `POST /workplace/v1/me/check-in/personal` | Profile tự khai kiểm tra thiết bị và chủ mã rồi ghi `PERSONAL_SELF` với bằng chứng `SELF_REPORTED` để Nhân sự xem. |
+| `POST /workplace/v1/me/check-in/personal` | Profile tự khai kiểm tra thiết bị và chủ mã rồi ghi `PERSONAL_SELF` với bằng chứng `SELF_REPORTED` để Nhân sự xem. Mỗi nhân viên mặc định có bốn lượt mỗi ngày công, API trả `429 PERSONAL_SELF_LIMIT` khi vượt. |
 | `GET /workplace/v1/me/devices`, `PATCH /workplace/v1/me/devices/{reference}` | Xem thiết bị của tài khoản và duyệt hoặc gỡ qua trình duyệt tin cậy. Nhân sự và quản trị viên dùng `/workplace/v1/hr/employees/{employeeId}/devices`. |
 | `GET /workplace/v1/station` | Chỉ Bảo vệ, trả trạm đang hoạt động được gán. |
 | `POST /access/v1/verify` | Kiểm tra phiên Bảo vệ, trạm, JWT QR, quyền vào/ra và idempotency. `Idempotency-Key` trùng `eventId`. |
@@ -124,7 +125,8 @@ TTL 30 giây, skew 5 giây, snapshot tối đa 15 phút, timeout Turnstile 800 m
 
 | Metric | Xem qua `/actuator/metrics/<tên>` |
 | --- | --- |
-| `tmc.edge.snapshot.fresh` | `1` là FRESH, `0` là STALE. |
+| `tmc.edge.snapshot.fresh` | `1` khi snapshot còn dùng được, `0` khi STALE. |
+| `tmc.edge.snapshot.seconds.remaining` | Số giây đến lúc snapshot hết hạn. Giá trị `0` khi snapshot hết hạn hoặc đi trước đồng hồ quá 5 giây. |
 | `tmc.edge.outbox.depth` | Số dòng đang chờ xử lý. Chỉ tính backlog Central khi dispatch được bật. |
 | `tmc.edge.verify.decisions` | Kết quả ALLOW/DENY, kể cả response idempotent. Lọc bằng `?tag=decision:DENY` hoặc `?tag=reasonCode:REPLAY`. |
 | `tmc.edge.gate.commands` | Outcome ban đầu theo `status`, gồm ACKED, UNKNOWN và FAILED. Replay idempotent không gửi thêm lệnh. |
@@ -140,17 +142,26 @@ Metric quyết định và timer xuất hiện sau khi có request tương ứng
 .\mvnw.cmd -B verify
 ```
 
-Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B test`. Test tích hợp mở cổng loopback tạm và dùng H2 trong bộ nhớ. Workflow CI chạy các test backend trên Ubuntu. [Bộ test backend](src/test/java/tmc/) · [Đối chiếu test theo AC](../README.md#m2-checklist)
+Trên macOS/Linux, thay bằng `./mvnw`. Nếu đã có Maven, dùng `mvn -B test`. Test tích hợp mở cổng loopback tạm. Hầu hết ca dùng H2. `PostgresWorkplacePersistenceTest` chạy profile `workplace,postgres` trên PostgreSQL 15 thật qua Testcontainers và kiểm tra schema, `JdbcAttemptStore`, `JdbcPresenceTracker`, rollback JTI và ngày công của hạn mức tự khai. Cần Docker Linux engine để chạy cả bộ. Workflow CI chạy các test backend trên Ubuntu. [Bộ test backend](src/test/java/tmc/) · [Đối chiếu test theo AC](../README.md#m2-checklist)
 
-Ngày 25/11/2026, `mvnw.cmd clean verify` chạy trên Windows với JDK 21 và một kho dependency Maven trống. Kết quả là **79 test đạt** và JAR được đóng gói thành công. Log đầy đủ của lần chạy local nằm ở `verification-logs/maven-verify.log` từ thư mục gốc. [Test từng bước](src/test/java/tmc/access/application/step/) · [Workflow CI](../.github/workflows/ci.yml)
+Commit [`a65cd2d`](https://github.com/lazy128/tmc-qr-attendance/commit/a65cd2dc1c8f304b3c67cd2a1439a97906cf56dd) có 117 test Maven đạt trên Windows và CI GitHub đạt cả backend và frontend. Bộ Testcontainers bổ sung sau commit này. [Test từng bước](src/test/java/tmc/access/application/step/) · [Workflow CI](../.github/workflows/ci.yml)
 
-Để đo tải trên DB mới, đặt `TMC_EMPLOYEE_DEMO_TOKEN` và `TMC_DEVICE_PROOF` đã đăng ký trên Edge, rồi chạy `node scripts/access-load.mjs` từ `backend/`. Script mặc định phát 800 scan trong 30 phút, đo HTTP verify và ghi JSON Lines. Khi chạy hai site, đặt `EDGE_URL`, `SITE_ID`, `STATION_ID`, `TMC_DEVICE_PROOF` và `LOAD_REPORT` cho từng tiến trình. Tạo đường dẫn báo cáo mới cho mỗi lần chạy. Có thể đặt `DURATION_SECONDS=30` để thử nhanh. [Khởi động và kiểm tra hai site](../README.md#demo-hai-nhà-máy)
+Để đo tải trên DB mới, đặt `TMC_EMPLOYEE_DEMO_TOKEN` và `TMC_DEVICE_PROOF` đã đăng ký trên Edge, rồi chạy `node scripts/access-load.mjs` từ `backend/`. Script mặc định phát 800 scan trong 30 phút, đo HTTP verify và ghi JSON Lines. Khi chạy hai site, đặt `EDGE_URL`, `SITE_ID`, `STATION_ID`, `TMC_DEVICE_PROOF` và `LOAD_REPORT` cho từng tiến trình. Tạo đường dẫn báo cáo mới cho mỗi lần chạy. Có thể đặt `DURATION_SECONDS=30` để thử nhanh.
+
+Bảng cũ dưới đây đã được ghi trong commit `d4f0d8e` và áp dụng cho bản Phase 2 trước thay đổi về circuit breaker, đối soát và lô lương.
 
 | Lần đo local Phase 2, H2 file và fake Turnstile | ACKED | Lỗi hoặc timeout | Trên 2 giây | Max |
 | --- | ---: | ---: | ---: | ---: |
 | SITE-1, 30 giây | 800 / 800 | 0 | 0 | 74,55 ms |
 | SITE-2, 30 giây | 800 / 800 | 0 | 0 | 58,35 ms |
 
-Số liệu trên là lần đo trước khi bổ sung observability. Phép đo tính từ HTTP request đến khi Node đọc được response Edge, chưa gồm thời gian render kiosk, LAN và Turnstile thật. Kịch bản nghiệm thu 30 phút chưa được chạy.
+Lần đo mới dùng mã từ `a65cd2d` cùng các thay đổi trong đợt rà soát kiến trúc, image Edge `sha256:0b5429d090c2`. Hai container `bd` và `la` chạy đồng thời, mỗi container dùng H2 riêng và fake Turnstile. Đồng bộ Central tắt trong phép đo này.
+
+| Lần đo local đồng thời, 30 giây mỗi Edge | ACKED | Lỗi hoặc timeout | UNKNOWN | Trên 2 giây | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Bình Dương, `BD-G01` | 800 / 800 | 0 | 0 | 0 | 427,03 ms |
+| Long An, `LA-G01` | 800 / 800 | 0 | 0 | 0 | 434,19 ms |
+
+Phép đo rút gọn tính từ lúc gửi HTTP request đến khi Node đọc xong phản hồi Edge. Nó đo luồng xác minh và ACK bình thường. Test tích hợp kiểm tra đối soát `EXPIRED`, circuit breaker và lô lương riêng. Nghiệm thu 30 phút cần chạy tại từng nhà máy với kiosk, LAN và Turnstile thật.
 
 [Ba view kiến trúc](../README.md#architecture-views) · [SOLID](../README.md#solid) · [Checklist và sai lệch](../README.md#m2-checklist)

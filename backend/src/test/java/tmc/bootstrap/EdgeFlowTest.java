@@ -394,6 +394,11 @@ class EdgeFlowTest {
       assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.snapshot.seconds.remaining"), "VALUE")).isZero();
       assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.outbox.depth"), "VALUE")).isEqualTo(1);
       assertThat(getFrom(staleBase, "/actuator/env").statusCode()).isEqualTo(404);
+      var future = (tmc.access.infrastructure.snapshot.MutableSnapshot)
+          stale.getBean(tmc.access.domain.port.SnapshotProvider.class);
+      future.refresh(Instant.now().plusSeconds(60));
+      assertThat(getFrom(staleBase, "/actuator/health").statusCode()).isEqualTo(503);
+      assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.snapshot.seconds.remaining"), "VALUE")).isZero();
     }
   }
 

@@ -116,6 +116,39 @@ class WorkplaceFlowTest {
       var projected = app.getBean(tmc.attendance.infrastructure.TimesheetService.class).calculate("NV211", day).orElseThrow();
       assertThat(projected.row().workedMinutes()).isZero();
       assertThat(projected.row().reviewFlag()).isTrue();
+
+      for (int report = 0; report < 2; report++) {
+        var pass = data(send("POST", "/workplace/v1/me/qr", desktop, Map.of("direction", "EXIT")));
+        assertThat(send("POST", personal, phone, Map.of("code", pass.path("token").asText())).statusCode())
+            .isEqualTo(200);
+      }
+      var competing = new java.util.ArrayList<CompletableFuture<HttpResponse<String>>>();
+      var codes = new java.util.ArrayList<String>();
+      for (int i = 0; i < 2; i++) {
+        var pass = data(send("POST", "/workplace/v1/me/qr", desktop, Map.of("direction", "ENTRY")));
+        codes.add(pass.path("token").asText());
+      }
+      for (int i = 0; i < codes.size(); i++) {
+        var device = i == 0 ? desktop : phone;
+        var payload = json.writeValueAsString(Map.of("code", codes.get(i)));
+        var call = request(personal, device).header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
+        competing.add(HTTP.sendAsync(call, HttpResponse.BodyHandlers.ofString()));
+      }
+      var outcomes = List.of(competing.get(0).join(), competing.get(1).join());
+      assertThat(outcomes.stream().map(HttpResponse::statusCode)).containsExactlyInAnyOrder(200, 429);
+      int rejectedIndex = outcomes.get(0).statusCode() == 429 ? 0 : 1;
+      var rejection = data(outcomes.get(rejectedIndex));
+      assertThat(rejection.path("code").asText()).isEqualTo("PERSONAL_SELF_LIMIT");
+      assertThat(rejection.path("retryable").asBoolean()).isFalse();
+      assertThat(send("POST", personal, phone, Map.of("code", codes.get(rejectedIndex))).statusCode()).isEqualTo(429);
+      assertThat(data(send("POST", personal, phone, body))).isEqualTo(data(recorded));
+      assertThat(jdbc.queryForObject("""
+          SELECT COUNT(*) FROM access_attempt WHERE employee_id='NV211' AND evidence='SELF_REPORTED'
+          """, Integer.class)).isEqualTo(4);
+      var otherPass = data(send("POST", "/workplace/v1/me/qr", other, Map.of("direction", "ENTRY")));
+      assertThat(send("POST", personal, other, Map.of("code", otherPass.path("token").asText())).statusCode())
+          .isEqualTo(200);
     }
   }
 

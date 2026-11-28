@@ -50,6 +50,7 @@ public final class AccessStates {
     DEVICE_MISMATCH,
     ANTI_PASSBACK,
     COMMAND_PENDING,
+    PERSONAL_SELF_LIMIT,
     SHIFT_COMPLETED,
     STATION_SCOPE,
     ZONE_DENIED,

@@ -59,7 +59,7 @@ public class EdgeHealthIndicator implements HealthIndicator, MeterBinder {
   @Override
   public void bindTo(MeterRegistry registry) {
     Gauge.builder("tmc.edge.snapshot.fresh", this, edge -> edge.snapshotRemaining().isNegative() ? 0 : 1)
-        .description("Snapshot freshness: 1 is FRESH, 0 is STALE")
+        .description("Snapshot freshness: 1 is usable, 0 is stale")
         .register(registry);
     Gauge.builder("tmc.edge.snapshot.seconds.remaining", this, edge -> Math.max(0, edge.snapshotRemaining().toSeconds()))
         .description("Seconds left before the policy snapshot expires")
@@ -75,14 +75,13 @@ public class EdgeHealthIndicator implements HealthIndicator, MeterBinder {
     var current = freshness(remaining);
     if (current == lastReported) return;
     if (current == Freshness.EXPIRING) LOG.warn("Edge policy snapshot expires in {} seconds", remaining.toSeconds());
-    if (current == Freshness.STALE) LOG.warn("Edge policy snapshot expired; scans denied until policy refresh");
+    if (current == Freshness.STALE) LOG.warn("Edge policy snapshot is stale; scans denied until policy refresh");
     if (current == Freshness.FRESH && lastReported != null) LOG.info("Edge policy snapshot refreshed");
     lastReported = current;
   }
 
   private Duration snapshotRemaining() {
-    var age = Duration.between(snapshot.snapshotTime(), clock.now());
-    return age.isNegative() ? snapshotMaxAge : snapshotMaxAge.minus(age);
+    return snapshot.remainingAt(clock.now(), snapshotMaxAge);
   }
 
   private Freshness freshness(Duration remaining) {

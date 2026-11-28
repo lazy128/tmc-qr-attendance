@@ -49,6 +49,7 @@ import tmc.access.infrastructure.turnstile.SoftwareAttendanceAdapter;
 import tmc.access.infrastructure.snapshot.FileSnapshotProvider;
 import tmc.access.infrastructure.persistence.JdbcCredentialStore;
 import tmc.access.infrastructure.persistence.JdbcPresenceTracker;
+import tmc.access.infrastructure.persistence.JdbcPersonalCheckInQuota;
 import tmc.access.infrastructure.persistence.JdbcAttemptStore;
 import tmc.access.infrastructure.persistence.JdbcStationRegistry;
 import tmc.access.infrastructure.turnstile.MeteredGateCommandSender;
@@ -166,9 +167,12 @@ public class AccessConfiguration {
       JdbcTemplate jdbc,
       PlatformTransactionManager tx,
       JdbcPresenceTracker presence,
+      ShiftCalendar calendar,
+      @Value("${tmc.checkin.personal-self.max-per-day:4}") int maxSelfReports,
       @Value("${tmc.idempotency.reservation-ttl-seconds:60}") long reservationTtlSeconds
   ) {
-    return new JdbcAttemptStore(jdbc, tx, Duration.ofSeconds(reservationTtlSeconds), presence);
+    var personalQuota = new JdbcPersonalCheckInQuota(jdbc, calendar, maxSelfReports);
+    return new JdbcAttemptStore(jdbc, tx, Duration.ofSeconds(reservationTtlSeconds), presence, personalQuota);
   }
 
   @Bean

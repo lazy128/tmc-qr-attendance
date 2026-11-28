@@ -237,6 +237,10 @@ public class StationCheckInController {
   }
 
   private ResponseEntity<?> response(AccessAttempt attempt) {
+    if (attempt.reasonCode() == Reason.PERSONAL_SELF_LIMIT) {
+      return error(HttpStatus.TOO_MANY_REQUESTS, "PERSONAL_SELF_LIMIT",
+          "Bạn đã đạt giới hạn lượt tự khai trong ngày công này.", false);
+    }
     return ok(new Result(attempt.eventId().value(), attempt.direction().name(), attempt.decision().name(),
         attempt.reasonCode() == null ? null : attempt.reasonCode().name(), attempt.command().name(), attempt.evidence() == null ? null : attempt.evidence().name(), attempt.scannedAt()));
   }

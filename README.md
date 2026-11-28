@@ -51,7 +51,7 @@ Trình duyệt đăng nhập đầu tiên được tin cậy. Trên thiết bị
 
 Ngày công được xác định theo ca của nhân viên, gồm thời gian đến sớm và ra muộn. Mốc 06:00 dùng khi lượt quét nằm ngoài cửa sổ ca. Mặc định mỗi ngày công có một cặp giờ vào/ra. Dữ liệu thiếu giờ ra của ca trước còn trong bảng công để Nhân sự đối chiếu.
 
-Tự khai bằng QR cá nhân tắt mặc định. Khi chạy riêng với profile `workplace,personal-self-demo`, mã tự khai có hiệu lực 60 giây và gửi lượt cho Nhân sự xem xét. Lượt tự khai không mở cổng và không cộng giờ công. Chi tiết về các kênh và giới hạn xác minh có trong [ADR về QR tại cổng](docs/adr/ADR-001-station-qr-presence.md).
+Tự khai bằng QR cá nhân tắt mặc định. Khi chạy riêng với profile `workplace,personal-self-demo`, mã tự khai có hiệu lực 60 giây và gửi lượt cho Nhân sự xem xét. Lượt tự khai không mở cổng và không cộng giờ công. Mỗi nhân viên mặc định có bốn lượt tự khai trong một ngày công. Gửi lại cùng lượt không dùng thêm hạn mức. Chi tiết về các kênh và giới hạn xác minh có trong [ADR về QR tại cổng](docs/adr/ADR-001-station-qr-presence.md).
 
 - Với HTTPS, cấu hình chứng chỉ thông qua `TMC_DEV_HTTPS_CERT` và `TMC_DEV_HTTPS_KEY`, rồi để cookie ở chế độ bảo mật mặc định. Thiết bị quét phải tin cậy chứng chỉ. Dùng `npm run dev -- --host 0.0.0.0 --strictPort` để mở ứng dụng trong mạng nội bộ.
 - Khi kiểm tra qua Wi‑Fi riêng với HTTP, thêm origin theo IP LAN vào `TMC_CORS_ORIGINS` và đặt `TMC_SESSION_SECURE=false` trong `backend/.env`. Trình duyệt trên điện thoại có thể **Chụp mã QR** hoặc mở liên kết đọc bởi Camera. `VITE_QR_SCAN_ORIGIN` đặt cùng địa chỉ nếu màn hình nhân viên được mở qua localhost.
@@ -365,9 +365,14 @@ Những ranh giới này cho phép test Access với fake Turnstile và thay rul
 2. **SRP và trạng thái dùng chung.** `VerifyAccessUseCase` vừa điều phối pipeline, vừa giữ chỗ idempotency, tạo và lưu bản ghi từ chối, rồi xử lý trường hợp lỗi sau khi đã gửi lệnh. Các field public trong `AccessContext` khiến quan hệ giữa những bước này chỉ thể hiện qua thứ tự thực thi. Ví dụ, `GateCommandStep` dựa vào `persisted` và `attempt` do bước lưu thiết lập. Một phương thức ghi nhận attempt đã lưu có thể cập nhật cả hai cùng lúc và giữ điều kiện đó ngay trong context. [AccessContext](backend/src/main/java/tmc/access/application/AccessContext.java) · [GateCommandStepTest](backend/src/test/java/tmc/access/application/step/GateCommandStepTest.java)
 3. **Bằng chứng ở cấp step.** Test token trước đây dùng claim giả lập. Test riêng hiện ký và xác minh ES256 bằng khóa test, kiểm tra riêng sai `kid`, sai chữ ký và các biên skew. Ma trận credential, scope và anti-passback xác nhận mã từ chối của từng bước. Test HTTP/H2 kiểm tra hai hành vi phụ thuộc vào tích hợp là rollback JTI khi outbox lỗi và HTTP 409 khi request còn xử lý. [Test từng bước](backend/src/test/java/tmc/access/application/step/) · [EdgeFlowTest](backend/src/test/java/tmc/bootstrap/EdgeFlowTest.java)
 
-## Sai lệch so với thiết kế
+## Giới hạn đã biết
 
-Phase 0–1 dùng `EDGE_VERIFY` và `STRICT` để mô tả cách vận hành khi mất WAN. Demo dùng trạng thái snapshot `FRESH` và `STALE` khi chạy ở cấu hình snapshot. `FRESH` cho phép tiếp tục kiểm tra cục bộ. Tại bước policy, `STALE` dẫn đến `SNAPSHOT_STALE` và bỏ qua bước gửi lệnh cổng. [ADR-05](Phase1_Architecture.md#3-architecture-decisions-adr-index)
+- **Thu hồi giữa các Edge.** Thu hồi có hiệu lực ngay trong DB của Edge hiện tại. Edge khác dùng DB riêng nhận thay đổi qua snapshot khi được cập nhật. Edge chỉ chấp nhận snapshot tối đa 15 phút tuổi và từ chối snapshot đi trước đồng hồ quá 5 giây. Cửa sổ 15 phút giới hạn thời gian chấp nhận dữ liệu cũ, còn độ trễ lan truyền phụ thuộc bên phát và kênh phân phối.
+- **Điểm lỗi đơn.** Bản nộp dùng một Edge và một DB cho hai nhà máy. Edge hoặc DB dừng làm cả hai nhà máy mất đường ghi công. Chạy hai Edge độc lập và kiểm thử khôi phục là phần nghiệm thu triển khai.
+- **Mất điện thoại.** Nhân viên có thể đóng phiên hoặc quản lý thiết bị đã duyệt. Việc thu hồi credential QR do Nhân sự thực hiện.
+- **Thiết bị cổng và Payroll.** `HttpTurnstileAdapter` là stub trả `FAILED` và chờ hợp đồng vendor. Luồng bản nộp dùng adapter xác nhận bằng phần mềm. Cổng, cảm biến và ACK từ Payroll cần hệ thống thật để nghiệm thu.
+- **Chuyển tiếp QR.** Ảnh mã tại cổng có thể được chuyển tiếp trong 15 giây. [ADR 001](docs/adr/ADR-001-station-qr-presence.md)
+- **Đo tải.** Số liệu hiện có là phép đo HTTP loopback rút gọn với adapter giả lập. Đo 30 phút từ kiosk ở LAN thực tế là một ca nghiệm thu riêng. [Môi trường và kết quả đo](backend/README.md#chạy-test-và-đo-tải)
 
 ## M2 Checklist
 
@@ -390,7 +395,7 @@ Phase 0–1 dùng `EDGE_VERIFY` và `STRICT` để mô tả cách vận hành kh
 | AC-03 · Attendance Transaction | `EdgeFlowTest` kiểm tra ghi bản ghi và cờ HR review. `AttendanceEligibilityTest` kiểm tra ACKED-only. | Test từng trường employee, site, time, direction và evidence theo schema được duyệt. |
 | AC-04 · độ bền dữ liệu | `EdgeFlowTest` ép lỗi insert outbox, kiểm tra JTI rollback và không phát lệnh. | Central lưu kết quả và bảo vệ replay trong DB. Nghiệm thu tại nơi triển khai cần đối soát dữ liệu qua lần khởi động lại toàn hệ thống. |
 | AC-05 · idempotency | `EdgeFlowTest` kiểm tra replay kết quả cũ, hai request đồng thời dùng một JTI và HTTP 409 `REQUEST_IN_PROGRESS` có thể thử lại. `VerificationPipelineTest` kiểm tra trạng thái in-progress trong lúc gửi lệnh và việc gửi lệnh một lần khi retry sau timeout. | Kiểm thử quy tắc retry trên thiết bị thật. |
-| AC-06 · thời gian kiosk | [Đo tải local](backend/README.md) thực hiện 800 scan/site với hai site đồng thời trong 30 giây, chậm nhất 74,55 ms ở ranh giới HTTP Edge. | Chạy kịch bản chính thức 30 phút tại từng site và đo tới kiosk với LAN/Turnstile thật. |
+| AC-06 · thời gian kiosk | Phép đo rút gọn dùng script và ghi rõ bản nguồn, môi trường và ranh giới HTTP Edge. [Kết quả đo tải](backend/README.md#chạy-test-và-đo-tải) | Chạy kịch bản chính thức 30 phút tại từng site và đo tới kiosk với LAN/Turnstile thật. |
 | AC-07 · gửi HR trước 12:00 ngày 1 | `EdgeFlowTest` dùng clock cố định, xác nhận batch tháng chỉ tạo một lần và lưu ACK mô phỏng trước trưa. | Bản nộp lưu lô CSV gốc và lô bổ sung có audit. Cần hợp đồng import và ACK thực tế của Payroll để nghiệm thu gửi tự động. |
 | AC-08 · RBAC | `EdgeFlowTest` kiểm tra yêu cầu token, Admin bị từ chối đọc attendance, scope Employee và quyền export của HR. | Ma trận role/scope TMC phê duyệt và test quản trị role/config. |
 | AC-09 · audit | `EdgeFlowTest` đọc và tính lại hash audit, phát hiện khi đổi một trường. Có audit cho allow/deny, QR, correction và các thao tác attendance đã tích hợp. | Event catalog, quyền tra cứu, chống xóa và chính sách retention đầy đủ. |

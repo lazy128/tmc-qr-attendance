@@ -141,6 +141,7 @@ ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS opens_at TIME;
 ALTER TABLE station_registry ADD COLUMN IF NOT EXISTS closes_at TIME;
 ALTER TABLE access_attempt ADD COLUMN IF NOT EXISTS channel VARCHAR(20) DEFAULT 'GATE_SCAN' NOT NULL;
 ALTER TABLE access_attempt ADD COLUMN IF NOT EXISTS attendance_gate BOOLEAN DEFAULT TRUE NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_personal_quota ON access_attempt(channel,employee_id,scanned_at);
 CREATE INDEX IF NOT EXISTS idx_access_pending_scan ON access_attempt (site_id, employee_id, attendance_gate, command_state);
 
 CREATE INDEX IF NOT EXISTS idx_attendance_employee_time ON attendance_record(employee_id, scanned_at);

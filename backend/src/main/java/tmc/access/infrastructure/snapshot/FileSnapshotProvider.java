@@ -26,7 +26,7 @@ public final class FileSnapshotProvider implements SnapshotProvider {
   public void reload(Instant now) throws IOException {
     Snapshot next = json.readValue(path.toFile(), Snapshot.class);
     if (next.generatedAt() == null || next.revoked() == null || next.stationSites() == null
-        || next.generatedAt().isAfter(now)) {
+        || next.generatedAt().isAfter(now.plus(MAX_FUTURE_SKEW))) {
       throw new IOException("Missing or invalid snapshot fields");
     }
     if (next.generatedAt().isAfter(current.generatedAt())) current = next;
