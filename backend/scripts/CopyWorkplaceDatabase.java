@@ -23,7 +23,7 @@ class CopyWorkplaceDatabase {
       "workplace_session", "workplace_login_history", "workplace_browser_device", "device_binding",
       "access_attempt", "gate_incident_review", "central_sync_lock", "central_access_event", "central_token_use", "used_token", "edge_outbox", "idempotency_request", "edge_audit",
       "employee_presence", "attendance_record", "timesheet_day_lock", "timesheet_adjustment",
-      "daily_timesheet", "timesheet_publication", "hr_export_batch");
+      "daily_timesheet", "timesheet_publication", "hr_export_batch", "payroll_batch_lock", "payroll_batch");
 
   public static void main(String[] args) throws Exception {
     if (args.length != 4 || !args[0].endsWith(".mv.db") || !args[1].startsWith("jdbc:postgresql:")) {
@@ -37,7 +37,7 @@ class CopyWorkplaceDatabase {
         var output = DriverManager.getConnection(args[1], required("TMC_DB_USERNAME"), required("TMC_DB_PASSWORD"))) {
       var sourceTables = sourceTables(input);
       var required = new LinkedHashSet<>(TABLES);
-      required.removeAll(List.of("gate_incident_review", "central_sync_lock", "central_access_event", "central_token_use"));
+      required.removeAll(List.of("gate_incident_review", "central_sync_lock", "central_access_event", "central_token_use", "payroll_batch_lock", "payroll_batch"));
       if (!sourceTables.containsAll(required) || !Set.copyOf(TABLES).containsAll(sourceTables)) {
         throw new IllegalStateException("H2 has unexpected or missing tables. Check its schema before copying.");
       }
@@ -125,7 +125,7 @@ class CopyWorkplaceDatabase {
   }
 
   private static boolean seeded(String table) {
-    return "audit_lock".equals(table) || "central_sync_lock".equals(table);
+    return "audit_lock".equals(table) || "central_sync_lock".equals(table) || "payroll_batch_lock".equals(table);
   }
 
   private static long queryCount(Connection database, String table) throws SQLException {

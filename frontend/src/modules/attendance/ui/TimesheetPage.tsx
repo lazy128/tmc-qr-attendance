@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { GateIncidentQueue } from "../../access/ui/GateIncidentQueue";
+import { PayrollBatchesPanel } from "./PayrollBatchesPanel";
 import { errorMessage } from "../../shared/lib/error-message";
 import { AppPage } from "../../shared/ui/AppPage";
 import { TrustedDevicesPanel } from "../../shared/ui/TrustedDevicesPanel";
@@ -23,6 +24,15 @@ const labels = {
   DUPLICATE: "Trùng lượt",
   REVIEW: "Cần HR xem",
 };
+function saveFile(file: Blob, name: string) {
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function currentMonth() {
   const parts = new Intl.DateTimeFormat("en", {
     year: "numeric",
@@ -156,12 +166,7 @@ function Timesheet({ role, assignedSite }: { role: Role; assignedSite: string | 
   function download(type: "csv" | "xlsx") {
     void operate(async () => {
       const blob = await workflow.export(month, type, site, filter);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `timesheet-${month}${site ? `-${site}` : ""}.${type}`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveFile(blob, `timesheet-${month}${site ? `-${site}` : ""}.${type}`);
     });
   }
 
@@ -260,10 +265,13 @@ function Timesheet({ role, assignedSite }: { role: Role; assignedSite: string | 
               disabled={loading || operation || !month}
               onClick={() => download("csv")}
             >
-              <Download size={16} /> Xuất CSV cho lương
+              <Download size={16} /> Tải CSV bảng công
             </button>
           </div>
         </div>
+      )}
+      {canExport && month && (
+        <PayrollBatchesPanel key={month} month={month} revision={reload} saveFile={saveFile} />
       )}
       {canExport && <GateIncidentQueue />}
       {canExport && filter && <TrustedDevicesPanel key={filter} employeeId={filter} />}

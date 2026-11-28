@@ -181,6 +181,19 @@ CREATE TABLE IF NOT EXISTS timesheet_publication (
   next_attempt TIMESTAMP WITH TIME ZONE
 );
 
+CREATE TABLE IF NOT EXISTS payroll_batch_lock (id INT PRIMARY KEY);
+INSERT INTO payroll_batch_lock(id) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM payroll_batch_lock WHERE id=1);
+CREATE TABLE IF NOT EXISTS payroll_batch (
+  period VARCHAR(7) NOT NULL,
+  batch_no INT NOT NULL,
+  row_count INT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  actor VARCHAR(120) NOT NULL,
+  csv_payload TEXT NOT NULL,
+  snapshot_payload TEXT NOT NULL,
+  PRIMARY KEY(period,batch_no)
+);
+
 CREATE TABLE IF NOT EXISTS hr_export_batch (
   period VARCHAR(7) PRIMARY KEY,
   csv_payload TEXT NOT NULL,

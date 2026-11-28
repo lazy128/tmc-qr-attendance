@@ -11,6 +11,8 @@ export type AttendanceStatus = {
 };
 export type Pass = AttendanceStatus & { token: string; expiresAt: string };
 export type Direction = "ENTRY" | "EXIT";
+export type PayrollBatch = { number: number; rows: number; createdAt: string };
+export type PayrollHistory = { pendingRows: number; batches: PayrollBatch[] };
 export type GateIncident = {
   eventId: string;
   employeeName: string;
@@ -218,6 +220,14 @@ export const workflow = {
       method: "POST",
       body: JSON.stringify({ employeeId, date, exitAt, reason }),
     }),
+  payrollHistory: (month: string, signal: AbortSignal) =>
+    request<PayrollHistory>(`${sheets}/payroll/${encodeURIComponent(month)}`, { signal }),
+  capturePayroll: (month: string) =>
+    request<PayrollBatch | undefined>(`${sheets}/payroll/${encodeURIComponent(month)}`, {
+      method: "POST",
+    }),
+  downloadPayroll: (month: string, number: number) =>
+    download(`${sheets}/payroll/${encodeURIComponent(month)}/${number}`, {}),
   export: (month: string, type: "xlsx" | "csv", siteId = "", employeeId = "") =>
     download(`${sheets}/${type}?${timesheetQuery(month, siteId, employeeId)}`, {}),
 };

@@ -17,6 +17,8 @@ function outcome(result: StationCheckIn) {
   if (result.command === "SENT" || result.command === "UNKNOWN") {
     return "Lượt chấm công đang chờ kết quả. Bấm Kiểm tra lại để xem trạng thái.";
   }
+  if (result.command === "FAILED")
+    return "Cổng chưa xác nhận lượt này. Hãy hỏi bảo vệ rồi quét mã mới.";
   if (result.evidence === "MANUAL_NO_PASSAGE") return "Nhân sự xác nhận lượt này chưa qua cổng.";
   if (result.command === "EXPIRED" && result.evidence !== "MANUAL_PASSAGE") {
     return "Lượt này đã chuyển cho Nhân sự đối soát. Bạn có thể quét mã mới.";

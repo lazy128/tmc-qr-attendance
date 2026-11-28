@@ -22,6 +22,8 @@ Sao chép `.env.example` thành `.env`, điền thông tin bên dưới rồi ch
 | `tmc.access.shift-grace-minutes`, `tmc.access.shift-late-grace-minutes` | Thời gian gia hạn của ca. Mặc định cho vào sớm 10 phút và ra muộn 30 phút. |
 | `tmc.qr.keystore` | Cấu hình PKCS#12 và mật khẩu `TMC_QR_KEYSTORE_PASSWORD` để giữ khóa ES256 qua lần khởi động lại. |
 
+Nếu Edge dùng snapshot, theo dõi gauge `tmc.edge.snapshot.seconds.remaining`. Mặc định Edge ghi cảnh báo khi còn 120 giây qua `tmc.edge.snapshot-warning-seconds`. Khi snapshot hết hạn, Edge chờ dữ liệu policy mới trước khi cho phép quét.
+
 ## Chuyển dữ liệu H2 sang PostgreSQL
 
 Dừng Edge đang kết nối vào H2. Giữ khóa phiên từ `data/workplace-session.key` trong `TMC_SESSION_KEY`. Chuẩn bị database PostgreSQL mới bằng `docker compose up -d --wait db`. Chạy lệnh dưới đây từ `backend/` sau khi đặt `TMC_DB_USERNAME` và `TMC_DB_PASSWORD` theo `.env`. Nếu H2 dùng thông tin khác mặc định, đặt thêm `TMC_H2_USERNAME` và `TMC_H2_PASSWORD`.
@@ -38,9 +40,15 @@ Lệnh tạo bản sao H2, chép vào PostgreSQL trống và đối chiếu từ
 
 ## Đối soát lượt cổng
 
-Edge hỏi lại trạng thái của lệnh đang chờ. Mặc định sau 120 giây kể từ khi nhận lượt, lệnh chưa có kết quả chuyển sang `EXPIRED`. Edge ghi audit `GATE_COMMAND_EXPIRED`, ngừng hỏi trạng thái và cho phép nhân viên quét mã mới. Điều chỉnh thời hạn qua `tmc.turnstile.reconciliation-seconds`.
+Edge hỏi lại trạng thái của lệnh đang chờ. Mặc định sau 120 giây kể từ khi nhận lượt, lệnh chưa có kết quả chuyển sang `EXPIRED`. Edge ghi audit `GATE_COMMAND_EXPIRED`, ngừng hỏi trạng thái và cho phép nhân viên quét mã mới. Điều chỉnh thời hạn qua `tmc.turnstile.reconciliation-seconds`. Mặc định một trạm tạm ngừng gửi lệnh 15 giây sau 3 lần lỗi liên tiếp. Khi hết thời gian chờ, một lượt đi qua để kiểm tra cổng đã phản hồi. Điều chỉnh qua `tmc.turnstile.breaker-failures` và `tmc.turnstile.breaker-reset-seconds`.
 
 Danh sách **Lượt cổng cần đối soát** nằm ở Trạm quét và Bảng công. Bảo vệ xem các lượt tại trạm được giao. Nhân sự hoặc quản trị viên xác minh đã qua cổng hay chưa rồi lưu lý do. Chỉ lượt được xác nhận qua cổng chấm công mới được đưa vào bảng công. Giờ công lấy từ lượt gốc. Lệnh mở cổng vẫn ghi `EXPIRED`, và xác nhận thủ công có evidence riêng. Đối soát lượt cũ giữ nguyên trạng thái hiện diện của lượt mới hơn.
+
+## Lô CSV cho lương
+
+Nhân sự hoặc quản trị viên mở **Bảng công → Các lô CSV cho lương** và chọn tháng. Chốt lô đầu tiên để lưu bản gốc cho cả hai nhà máy. Các lô sau chỉ chứa những dòng có thay đổi kể từ lần chốt gần nhất. Lịch sử lưu bản CSV của từng lô và cho tải lại theo số thứ tự. Bấm chốt nhiều lần khi dữ liệu chưa đổi trả về cùng lô.
+
+Mỗi dòng có khóa `employee_id` và `work_date`. `UPSERT` thay toàn bộ giá trị của dòng ngày công, gồm tổng phút tuyệt đối. `VOID` hủy dòng đã xuất trước đó. Áp dụng các lô theo số thứ tự, một lần cho mỗi cặp tháng và số lô. Lượt tự khai chưa có giờ vào đủ điều kiện không tạo dòng lương. Việc tạo và tải lô được ghi audit. Đây là hợp đồng tệp CSV của bản nộp, giao nhận tự động phụ thuộc định dạng import và ACK của Payroll tại nơi triển khai.
 
 ## API bản nộp
 
@@ -62,6 +70,7 @@ Danh sách **Lượt cổng cần đối soát** nằm ở Trạm quét và Bả
 | `GET/POST /workplace/v1/accounts`, `PATCH /workplace/v1/accounts/{username}` | Chỉ Quản trị viên, quản lý tài khoản và trạng thái. |
 | `GET/POST /admin/v1/stations`, `PATCH /admin/v1/stations/{id}` | Quản lý registry trạm, hướng, nhóm và giờ hoạt động. |
 | `GET /attendance/v1/timesheets?month=YYYY-MM` | Tra bảng công trong phạm vi của phiên. |
+| `GET/POST /attendance/v1/timesheets/payroll/{month}`, `GET /attendance/v1/timesheets/payroll/{month}/{number}` | Xem lịch sử, chốt lô gốc hoặc bổ sung, tải lại CSV theo số lô. |
 | `POST /attendance/v1/timesheets/corrections`, `GET /attendance/v1/timesheets/{csv,xlsx}` | Quản trị viên và Nhân sự bổ sung giờ ra và xuất báo cáo. Tệp lọc theo `month`, `siteId` và `employeeId` đã chọn. |
 
 Xác minh dùng giờ Edge nhận yêu cầu mới. Yêu cầu đã lưu được tra lại bằng `eventId` và dữ liệu gốc, kể cả khi QR đã hết hạn. Bảng công nhận kết quả qua outbox sau khi Edge ghi quyết định và xác nhận phần mềm.

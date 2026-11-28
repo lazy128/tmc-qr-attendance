@@ -49,6 +49,8 @@ function scanLabel(result: VerifyResult, direction: "ENTRY" | "EXIT") {
   if (result.command === "EXPIRED" && result.evidence !== "MANUAL_PASSAGE") {
     return "Lượt cổng đã chuyển cho Nhân sự đối soát. Có thể quét mã mới.";
   }
+  if (result.command === "FAILED")
+    return "Cổng chưa xác nhận lượt này. Hãy kiểm tra trạm rồi quét mã mới.";
   if (result.command !== "ACKED" && result.evidence !== "MANUAL_PASSAGE")
     return "Chưa thể ghi nhận lượt quét.";
   if (result.attendanceGate === false)

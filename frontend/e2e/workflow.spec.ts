@@ -227,7 +227,12 @@ test("approves a phone and scans the station QR to update both screens and payro
       await expect(row.getByRole("cell").nth(2)).toHaveText(/^\d\d:\d\d$/, { timeout: 1000 });
       await expect(row.getByRole("cell").nth(3)).toHaveText(/^\d\d:\d\d$/, { timeout: 1000 });
     }).toPass({ timeout: 15_000 });
-    await expect(payroll.getByRole("button", { name: "Xuất CSV cho lương" })).toBeEnabled();
+    await expect(payroll.getByRole("button", { name: "Tải CSV bảng công" })).toBeEnabled();
+    await payroll.getByText("Các lô CSV cho lương", { exact: true }).click();
+    await payroll.getByRole("button", { name: "Chốt lô đầu tiên" }).click();
+    const batchDownload = payroll.waitForEvent("download");
+    await payroll.getByRole("button", { name: "Tải CSV lô 1" }).click();
+    expect((await batchDownload).suggestedFilename()).toMatch(/^payroll-\d{4}-\d{2}-1\.csv$/);
 
     await adminPage.getByRole("link", { name: "Mở bảng công & Excel" }).click();
     const reportSite = adminPage.getByRole("combobox", { name: "Nhà máy", exact: true });

@@ -391,6 +391,7 @@ class EdgeFlowTest {
       assertThat(response.statusCode()).isEqualTo(503);
       assertThat(json.readTree(response.body())).isEqualTo(json.readTree("{\"status\":\"OUT_OF_SERVICE\"}"));
       assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.snapshot.fresh"), "VALUE")).isZero();
+      assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.snapshot.seconds.remaining"), "VALUE")).isZero();
       assertThat(measurement(getFrom(staleBase, "/actuator/metrics/tmc.edge.outbox.depth"), "VALUE")).isEqualTo(1);
       assertThat(getFrom(staleBase, "/actuator/env").statusCode()).isEqualTo(404);
     }

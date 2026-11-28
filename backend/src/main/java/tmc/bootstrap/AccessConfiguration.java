@@ -154,9 +154,11 @@ public class AccessConfiguration {
   @Bean(destroyMethod = "close")
   TimeoutGateCommandSender boundedTurnstile(
       @Qualifier("recordingAdapter") GateCommandSender adapter,
-      @Value("${tmc.turnstile.timeout-millis:800}") long timeout
+      @Value("${tmc.turnstile.timeout-millis:800}") long timeout,
+      @Value("${tmc.turnstile.breaker-failures:3}") int failures,
+      @Value("${tmc.turnstile.breaker-reset-seconds:15}") long reset
   ) {
-    return new TimeoutGateCommandSender(adapter, timeout);
+    return new TimeoutGateCommandSender(adapter, timeout, failures, Duration.ofSeconds(reset));
   }
 
   @Bean

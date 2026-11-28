@@ -205,7 +205,7 @@ public class TimesheetController {
     if (id == null || !employees.contains(id)) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
   }
 
-  private static YearMonth month(String text) {
+  static YearMonth month(String text) {
     try {
       if (!text.matches("[0-9]{4}-[0-9]{2}")) throw new IllegalArgumentException("Dùng YYYY-MM");
       return YearMonth.parse(text);
