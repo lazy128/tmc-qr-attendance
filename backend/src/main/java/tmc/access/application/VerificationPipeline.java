@@ -52,7 +52,7 @@ public final class VerificationPipeline {
         new CredentialStatusAndVersionStep(credentials, snapshot),
         new PolicyStep(policy, snapshot, clock, snapshotMaxAge),
         new ReplayCheckStep(usedTokens),
-        new AntiPassbackStep(presence),
+        new AntiPassbackStep(presence, usedTokens),
         new PersistAndConsumeStep(attempts, clock, sensorConfigured),
         new GateCommandStep(gate),
         new OutcomeRecordStep(attempts)
